@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Board · every Claude Code session at a glance</title>
+<meta name="description" content="A floating Mac window that gives each Claude Code session a live one-line stand-up: what it just did, what it is doing, what is next, and what is waiting on you. Free and open source.">
+<meta name="theme-color" content="#0B0B0C">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icon.png">
+<link rel="canonical" href="https://sessionboard.dev/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Session Board">
+<meta property="og:description" content="A floating Mac window that gives each Claude Code session a live one-line stand-up: what it just did, what it is doing, what is next, and what is waiting on you. Free and open source.">
+<meta property="og:url" content="https://sessionboard.dev/">
+<meta property="og:image" content="https://sessionboard.dev/hero.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+body{margin:0}
+*{box-sizing:border-box}
+.a-hero>*,.c-hero>*,.b-board>*{min-width:0}
+a{color:inherit}
+button{font:inherit;color:inherit;cursor:pointer}
+.rw-a{animation:rwA 7s ease-in-out infinite}
+.rw-b{animation:rwB 7s ease-in-out infinite;opacity:0}
+@keyframes rwA{0%,46%{opacity:1;transform:none}54%,92%{opacity:0;transform:translateY(-6px)}100%{opacity:1;transform:none}}
+@keyframes rwB{0%,46%{opacity:0;transform:translateY(6px)}54%,92%{opacity:1;transform:none}100%{opacity:0;transform:translateY(6px)}}
+@media (prefers-reduced-motion: reduce){.rw-a{animation:none;opacity:0}.rw-b{animation:none;opacity:1;transform:none}}
+@media (max-width: 480px){.cp-t{display:none}}
+
+.a-hero{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,0.95fr);gap:64px;align-items:center}
+.a-beats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#222327;border:1px solid #222327;border-radius:14px;overflow:hidden}
+.a-support{display:flex;flex-direction:column;border-bottom:1px solid #2A2B2E}
+.a-h1{text-wrap:balance}
+.a-h1{font-size:60px}
+.a-boardwrap{margin-left:56px}
+.a-film{margin-left:56px}
+@media (max-width: 900px){.a-boardwrap{margin-left:0!important}.a-film{margin-left:0!important}.a-tile{display:none!important}.a-hero{grid-template-columns:1fr;gap:44px}.a-beats{grid-template-columns:1fr}.a-srow{grid-template-columns:1fr!important;gap:6px!important}.a-card{padding:22px!important}.a-h1{font-size:38px}.a-pad{padding-left:20px!important;padding-right:20px!important}}
+
+
+.a-video{width:100%;max-width:540px;height:auto;display:block;background:#0B0B0C;-webkit-mask-image:linear-gradient(to right,transparent 0,#000 5%,#000 95%,transparent 100%),linear-gradient(to bottom,transparent 0,#000 4%,#000 96%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent 0,#000 5%,#000 95%,transparent 100%),linear-gradient(to bottom,transparent 0,#000 4%,#000 96%,transparent 100%);mask-composite:intersect}
+button[data-copied] .cp-t{display:inline}
+@media (max-width: 900px){.a-video{max-width:460px}}
+
+html{background:#0B0B0C}</style>
+</head>
+<body><div style="min-height: 100vh; background: #0B0B0C; color: #F2F2F3; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; -webkit-font-smoothing: antialiased">
+<div class="a-pad" style="max-width: 1240px; margin: 0 auto; padding: 0 48px">
+<nav style="display: flex; align-items: center; gap: 12px; height: 76px">
+<span aria-hidden="true" style="display: inline-flex; gap: 3px"><span style="width: 8px; height: 18px; border-radius: 2px; background: #F0BE62"></span><span style="width: 8px; height: 18px; border-radius: 2px; background: #4CC38A"></span><span style="width: 8px; height: 18px; border-radius: 2px; background: #8D8E91"></span></span>
+<span style="font: 700 16px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; letter-spacing: -0.01em">Session Board</span>
+<span style="flex: 1"></span>
+<a href="https://github.com/KiranPothana/session-board" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border: 1px solid #34353A; border-radius: 10px; font: 600 14px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; text-decoration: none; color: #F2F2F3"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>GitHub</a>
+</nav>
+
+<section class="a-hero" style="padding: 56px 0 96px">
+<div style="display: flex; flex-direction: column; gap: 26px">
+<span style="font: 700 11px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; letter-spacing: 0.14em; color: #4CC38A">CLAUDE CODE · MAC · OPEN SOURCE</span>
+<h1 class="a-h1" style="margin: 0; line-height: 1.02; letter-spacing: -0.035em; font-weight: 750">Know what every<br>session is doing.<br><span style="color: #7C7D83">Without opening one.</span></h1>
+<p style="margin: 0; max-width: 33em; font: 19px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #B4B5B9">One floating window gives each Claude Code chat a live stand-up: what it just did, what it’s doing, what’s next, and what’s waiting on you.</p>
+<div style="display: flex; flex-direction: column; gap: 12px; max-width: 560px">
+<div style="background: #131416; border: 1px solid #2A2B2E; border-radius: 12px; overflow: hidden"><div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 18px; border-top: 0">
+<span aria-hidden="true" style="flex: none; color: #5D5E63; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace">$</span><code style="flex: 1; min-width: 0; word-break: normal; overflow-wrap: normal; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #E6E6E9">claude plugin marketplace add KiranPothana/<wbr><span style="white-space: nowrap">session-board</span></code>
+<button aria-label="Copy: claude plugin marketplace add KiranPothana/session-board" style="flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 12.5px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span class="cp-t">Copy</span></button></div><div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 18px; border-top: 1px solid #2A2B2E">
+<span aria-hidden="true" style="flex: none; color: #5D5E63; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace">$</span><code style="flex: 1; min-width: 0; word-break: normal; overflow-wrap: normal; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #E6E6E9">claude plugin install <span style="white-space: nowrap">session-board</span>@<wbr><span style="white-space: nowrap">session-board</span></code>
+<button aria-label="Copy: claude plugin install session-board@session-board" style="flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 12.5px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span class="cp-t">Copy</span></button></div></div>
+<div style="display: flex; gap: 18px; align-items: center; font: 14px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #8D8E91; flex-wrap: wrap"><a href="https://github.com/KiranPothana/session-board" style="display: inline-flex; align-items: center; gap: 7px; color: #F2F2F3; font-weight: 600; text-decoration: none"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>View on GitHub →</a><span>macOS 15+ · Claude Code 2.1.287+ · Apple’s command-line tools</span></div>
+</div>
+</div>
+<div class="a-media" style="display: flex; justify-content: center"><video class="a-video" autoplay muted loop playsinline disablepictureinpicture disableremoteplayback preload="auto" poster="hero.jpg" width="1080" height="1350" aria-label="Session Board at work: four Claude Code sessions, each line rewriting as the work moves, a side task, a popup when one needs you, and the highlight following the chat you open"><source src="hero.mp4" type="video/mp4"></video></div>
+</section>
+
+<section style="padding: 24px 0 96px; display: flex; flex-direction: column; gap: 28px">
+<h2 style="margin: 0; font: 750 40px/1.1 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; letter-spacing: -0.03em; max-width: 18em">Every chat gives its stand-up. You just glance.</h2>
+<div class="a-beats"><div style="background: #101113; padding: 28px 28px 30px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 10px"><span style="font: 700 20px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #9A9AA0; width: 22px">✓</span><span style="font: 650 19px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #F2F2F3">Just did</span></div>
+<p style="margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">The last thing it finished, in plain words.</p>
+<div style="display: flex; flex-direction: column; gap: 6px; padding-top: 4px"><span style="display: flex; font: 12.5px/1.45 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #B4B5B9"><span aria-hidden="true" style="flex: none; width: 1.4em">✓</span><span>Fixed the redirect loop after sign‑in</span></span><span style="display: flex; font: 12.5px/1.45 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #B4B5B9"><span aria-hidden="true" style="flex: none; width: 1.4em">✓</span><span>Added per-key limits and the 429 reply</span></span></div>
+</div><div style="background: #101113; padding: 28px 28px 30px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 10px"><span style="font: 700 20px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #4CC38A; width: 22px">▶</span><span style="font: 650 19px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #F2F2F3">Doing now</span></div>
+<p style="margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">The work under way, rewritten as it moves.</p>
+<div style="display: flex; flex-direction: column; gap: 6px; padding-top: 4px"><span style="display: flex; font: 12.5px/1.45 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #DADADF"><span aria-hidden="true" style="flex: none; width: 1.4em">▶</span><span>Writing tests for the session refresh</span></span><span style="display: flex; font: 12.5px/1.45 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #DADADF"><span aria-hidden="true" style="flex: none; width: 1.4em">▶</span><span>Caching the feed for offline reads</span></span></div>
+</div><div style="background: #101113; padding: 28px 28px 30px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 10px"><span style="font: 700 20px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #F0BE62; width: 22px">!</span><span style="font: 650 19px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #F2F2F3">Next, and what waits on you</span></div>
+<p style="margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">What’s left, with your part marked in amber.</p>
+<div style="display: flex; flex-direction: column; gap: 6px; padding-top: 4px"><span style="display: flex; font: 12.5px/1.45 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #F0BE62"><span aria-hidden="true" style="flex: none; width: 1.4em">!</span><span>Review the new install section <span style="white-space: nowrap">· waits on you</span></span></span><span style="display: flex; font: 12.5px/1.45 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #B4B5B9"><span aria-hidden="true" style="flex: none; width: 1.4em">·</span><span>Release to TestFlight</span></span></div>
+</div></div>
+</section>
+
+<section style="padding: 0 0 96px; display: flex; flex-direction: column; gap: 22px">
+<span style="font: 700 11px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; letter-spacing: 0.14em; color: #8D8E91">AND AROUND THE SUMMARIES</span>
+<div class="a-support"><div class="a-srow" style="display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; padding: 16px 0; border-top: 1px solid #2A2B2E">
+<span style="font: 650 16px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #F2F2F3">Tells you which one</span><span style="font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">A numbered tile pops up beside the board, with a chime, when a session needs you or finishes.</span></div><div class="a-srow" style="display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; padding: 16px 0; border-top: 1px solid #2A2B2E">
+<span style="font: 650 16px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #F2F2F3">Click to go there</span><span style="font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">Click a name or the tile and you land in that chat: Claude Desktop, Terminal or iTerm2.</span></div><div class="a-srow" style="display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; padding: 16px 0; border-top: 1px solid #2A2B2E">
+<span style="font: 650 16px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #F2F2F3">Project first</span><span style="font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">Names start with their repo in grey, so one project’s sessions read as a group.</span></div><div class="a-srow" style="display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; padding: 16px 0; border-top: 1px solid #2A2B2E">
+<span style="font: 650 16px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #F2F2F3">Out of the way</span><span style="font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">Tap the right ⌥ to show or hide it. Floating or a regular window, light or dark.</span></div></div>
+</section>
+
+<section id="install" style="padding: 0 0 72px">
+<div class="a-card" style="background: #131416; border: 1px solid #2A2B2E; border-radius: 18px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+<h2 style="margin: 0; font: 750 34px/1.1 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; letter-spacing: -0.03em">Two commands. Then open a session.</h2>
+<div style="background: #0B0B0C; border: 1px solid #2A2B2E; border-radius: 12px; overflow: hidden"><div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 18px; border-top: 0">
+<span aria-hidden="true" style="flex: none; color: #5D5E63; font: 14px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace">$</span><code style="flex: 1; min-width: 0; word-break: normal; overflow-wrap: normal; font: 14px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #E6E6E9">claude plugin marketplace add KiranPothana/<wbr><span style="white-space: nowrap">session-board</span></code>
+<button aria-label="Copy: claude plugin marketplace add KiranPothana/session-board" style="flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 12.5px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span class="cp-t">Copy</span></button></div><div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 18px; border-top: 1px solid #2A2B2E">
+<span aria-hidden="true" style="flex: none; color: #5D5E63; font: 14px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace">$</span><code style="flex: 1; min-width: 0; word-break: normal; overflow-wrap: normal; font: 14px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #E6E6E9">claude plugin install <span style="white-space: nowrap">session-board</span>@<wbr><span style="white-space: nowrap">session-board</span></code>
+<button aria-label="Copy: claude plugin install session-board@session-board" style="flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 12.5px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span class="cp-t">Copy</span></button></div></div>
+<p style="margin: 0; font: 15px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #A6A7AC">The first time, the plugin builds the window app on your Mac in under a minute and opens it. Sessions already running show up too, with no restart. macOS 15+ · Claude Code 2.1.287+ · Apple’s command-line tools.</p>
+<div style="display: flex; gap: 12px; flex-wrap: wrap"><a href="https://github.com/KiranPothana/session-board" style="display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 12px; background: #F2F2F3; color: #0B0B0C; font: 650 15px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; text-decoration: none"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>Get it on GitHub</a></div>
+</div>
+</section>
+
+<footer style="display: flex; gap: 16px; align-items: center; padding: 28px 0 40px; border-top: 1px solid #1F2023; font: 13px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #7C7D83; flex-wrap: wrap"><span>Session Board · MIT licence</span><span style="flex: 1"></span><span>Made for Claude Code. Not an Anthropic product.</span></footer>
+</div></div>
+<script>
+// Copy buttons: the command after "Copy: " in the button's label
+for (const b of document.querySelectorAll('button[aria-label^="Copy: "]')) {
+  b.addEventListener('click', async () => {
+    const label = b.querySelector('.cp-t');
+    try {
+      await navigator.clipboard.writeText(b.getAttribute('aria-label').slice(6));
+      b.setAttribute('data-copied', '');
+      if (label) label.textContent = 'Copied';
+      setTimeout(() => { b.removeAttribute('data-copied'); if (label) label.textContent = 'Copy'; }, 1600);
+    } catch (e) {}
+  });
+}
+// Motion off: the film holds its first frame
+const v = document.querySelector('.a-video');
+const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+v.muted = true;
+function hold() { if (still.matches) { v.removeAttribute('autoplay'); v.pause(); v.currentTime = 0; } else { v.play().catch(() => {}); } }
+v.addEventListener('canplay', hold, { once: true });
+hold(); still.addEventListener('change', hold);
+</script>
+</body>
+</html>
