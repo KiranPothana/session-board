@@ -90,6 +90,8 @@ func baseName(_ path: String?) -> String {
 // "Continue" menu and Spotlight, checked 2026-10-11). Otherwise its tab in Terminal or iTerm2, or
 // failing that, the app it runs in is brought forward.
 func openSession(_ row: Row) {
+    // You're going to it: its popup has done its job
+    (NSApp.delegate as? AppDelegate)?.toasts.removeRow(row.id)
     let desktopOpen = !NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).isEmpty
     if desktopOpen, !row.bridgeId.isEmpty, let url = URL(string: "claude://claude.ai/code/" + row.bridgeId) {
         NSWorkspace.shared.open(url)
@@ -2038,6 +2040,13 @@ final class ToastCenter: ObservableObject {
         onTick?()
     }
 
+    // A session's popup, once you're on that session
+    func removeRow(_ rowId: String) {
+        guard toasts.contains(where: { $0.rowId == rowId }) else { return }
+        toasts.removeAll { $0.rowId == rowId }
+        onTick?()
+    }
+
     private func tick(_ dt: TimeInterval) {
         for i in toasts.indices where toasts[i].id != hovered { toasts[i].elapsed += dt }
         toasts.removeAll { $0.elapsed >= Self.seconds }
@@ -2945,6 +2954,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var showRequests: Timer?
     var style: AnyCancellable?
     var theme: AnyCancellable?
+    // The session you're viewing: its popup goes, however you got there
+    var viewing: AnyCancellable?
     var background: NSView?
 
     // A session wants you: its popup, unless it isn't on the board (dismissed)
@@ -3038,6 +3049,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         installShortcut()
         theme = board.$isDark.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] in self?.applyTheme($0) }
+        viewing = board.$focusedId.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] id in
+            if let id { self?.toasts.removeRow(id) }
+        }
         // macOS switching light and dark (also on a schedule): follow at once, not on the next reload
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main
