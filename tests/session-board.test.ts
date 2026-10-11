@@ -21,6 +21,8 @@ type Opts = {
   ps?: string
   size?: number
   onModel?: () => void
+  // A summary call that never answers, while this says so
+  hang?: () => boolean
   // Haiku's answer for a prompt; by default one active and one pending item
   answer?: (prompt: string) => { done?: string; active: string[]; pending: string[] }
   registry?: Record<string, object>
@@ -77,6 +79,7 @@ function stubEngine(on: any, opts: Opts = {}) {
       return { value: { isAnswered: true, text: opts.title ?? '"Fix the login page."', usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }
     }
     opts.onModel?.()
+    if (opts.hang?.()) return new Promise(() => {})
     opts.prompts?.push(e.prompt)
     opts.systems?.push(e.system)
     opts.models?.push(e.model + '/' + (e.effort ?? ''))
@@ -977,4 +980,41 @@ test("after a turn, the summary reads the reply the turn ended with, even before
   await waitFor(() => prompts.length > 0)
   expect(prompts[0]).toContain('Here are the steps. Then tell me "done".')
   expect(prompts[0]).not.toContain('Writing the steps now.')
+})
+
+test('a turn whose last summary was lost, as the mod reloaded when it ended, is summarized by the idle check', async ($, on) => {
+  const prompts: string[] = []
+  const tail = ['cut', ask('publish it'), finished('Committed. Run gh auth login yourself, then tell me.')].join('\n')
+  const answer = () => ({ active: [], pending: ['Log in with gh auth login · waits on you'] })
+  const { saved, clock } = stubEngine(on, { prompts, tail, answer, registry: {} })
+  // The record as the old copy of the mod left it: a summary from the middle of the turn
+  saved.set('s:' + ME, { id: ME, tasks: [], status: 'working', jobsKey: '', summaryReply: 'Checking the colours first.',
+    summary: { done: '', side: 'Pick colours that look distinct', paused: 'Publishing', active: [], pending: [], at: 1 } })
+  await start($)
+  await clock.advance(30_000)
+  await waitFor(() => (saved.get('s:' + ME) as any)?.summary?.side === '')
+  const rec: any = saved.get('s:' + ME)
+  expect(rec.summary.pending).toEqual(['Log in with gh auth login · waits on you'])
+  expect(prompts.filter((p) => p.includes('Run gh auth login yourself'))).toHaveLength(1)
+  // Once it has caught up, the check leaves the board alone
+  await clock.advance(30_000)
+  await settle()
+  expect(prompts.filter((p) => p.includes('Run gh auth login yourself'))).toHaveLength(1)
+})
+
+test('a summary call that never answers is given up on, so later summaries still run', async ($, on) => {
+  let hanging = true
+  const answer = () => ({ active: [], pending: ['Try the new popup · waits on you'] })
+  const { saved, clock } = stubEngine(on, { answer, hang: () => hanging })
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await settle()
+  hanging = false
+  await clock.advance(90_000)
+  await waitFor(() => !!(saved.get('s:' + ME) as any)?.summaryError)
+  expect((saved.get('s:' + ME) as any).summaryError).toContain('timed out')
+  await clock.advance(15_000)
+  await waitFor(() => !!(saved.get('s:' + ME) as any)?.summary)
+  expect((saved.get('s:' + ME) as any).summary.pending).toEqual(['Try the new popup · waits on you'])
 })

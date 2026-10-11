@@ -52,6 +52,9 @@ const BUSY_RESUMMARY_MS = 90 * 1000
 // A failed summary is tried again this much later, at most this many times in a row
 const SUMMARY_RETRY_MS = 15 * 1000
 const SUMMARY_RETRIES = 2
+// A summary call that hasn't answered after this long is given up on, so one that hangs can't
+// hold back every summary after it
+const SUMMARY_TIMEOUT_MS = 90 * 1000
 // How long a summary after a turn waits for the turn's last reply to reach the saved conversation
 const ANSWER_WAIT_MS = 1000
 const ANSWER_TRIES = 3
@@ -98,6 +101,8 @@ let summarizeAgain = false
 let turnAnswer = ''
 // Summaries that failed in a row, so a failure is retried only SUMMARY_RETRIES times
 let summaryFailures = 0
+// The reply checkOwnJobs last summarized because the board had missed it, so it tries once per reply
+let healedReply = ''
 // When the last summary started, so a long turn asks again only every BUSY_RESUMMARY_MS
 let lastTry = 0
 // The status the last publish wrote, so statusSince moves only when the status really changes
@@ -391,7 +396,7 @@ async function summarizeExchanges($, id, exchanges, pendingAsk, previous, workin
   const before = previous
     ? JSON.stringify({ active: previous.active.filter((x) => !isRemoved(x)), pending: previous.pending.filter((x) => !isRemoved(x)) })
     : 'none'
-  const answer = await $.model.complete({
+  const call = $.model.complete({
     // Sonnet 5.5 at low effort: replayed on real moments, it read a long,
     // many-topic chat correctly where Haiku blended two unrelated things into one, answered
     // faster, and used about a tenth of the output tokens Haiku spent thinking
@@ -401,6 +406,8 @@ async function summarizeExchanges($, id, exchanges, pendingAsk, previous, workin
     system: SUMMARY_SYSTEM,
     prompt: summaryPrompt(before, removed, exchanges, pendingAsk, working, jobs),
   })
+  const answer = await Promise.race([call, $.clock.sleep(SUMMARY_TIMEOUT_MS).then(() => null)])
+  if (answer === null) throw new Error('the summary call timed out')
   // Older builds resolve the reply's text, newer ones { isAnswered, text, usage }
   const reply = typeof answer === 'string' ? answer : answer?.isAnswered === false ? '' : String(answer?.text ?? '')
   const json = JSON.parse(reply.slice(reply.indexOf('{'), reply.lastIndexOf('}') + 1))
@@ -724,8 +731,10 @@ async function readExchanges($, path, want) {
 
 // This session's own commands: when one ends (or starts) while it's idle, its board is out of
 // date, since no turn will come to summarize it again. Every session checks its own.
+// The same goes for a turn whose last summary never happened: the mod reloaded as the turn
+// ended (the new copy starts idle and gets no turn.complete), or the call failed for good.
 async function checkOwnJobs($) {
-  if (!me || me.status !== 'idle' || !me.summary || summarizing) return
+  if (!me || me.status !== 'idle' || summarizing) return
   const registry = new Map()
   const home = await $.env.get('HOME')
   for (const f of await $.fs.list(home + '/.claude/sessions')) {
@@ -738,6 +747,13 @@ async function checkOwnJobs($) {
     }
   }
   const own = await ownTranscript($)
+  const latest = own.exchanges[own.exchanges.length - 1]?.reply ?? ''
+  const missed = own.ended && latest !== '' && latest !== me.summaryReply && latest !== healedReply
+  if (missed) {
+    healedReply = latest
+    return summarize($)
+  }
+  if (!me.summary) return
   const mine = [...((await runningJobs($, registry)).get(me.id) ?? []), ...backgroundLabels(own.agents, own.workflows)].sort().join(',')
   if (me.jobsKey === undefined || me.jobsKey !== mine) await summarize($)
   else if ((own.agents ?? 0) !== (me.agentsRunning ?? 0) || (own.workflows ?? 0) !== (me.workflowsRunning ?? 0)) {
