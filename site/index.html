@@ -38,9 +38,59 @@ button{font:inherit;color:inherit;cursor:pointer}
 @media (max-width: 900px){.a-boardwrap{margin-left:0!important}.a-film{margin-left:0!important}.a-tile{display:none!important}.a-hero{grid-template-columns:1fr;gap:44px}.a-beats{grid-template-columns:1fr}.a-srow{grid-template-columns:1fr!important;gap:6px!important}.a-card{padding:22px!important}.a-h1{font-size:38px}.a-pad{padding-left:20px!important;padding-right:20px!important}}
 
 
-.a-video{width:100%;max-width:540px;height:auto;display:block;background:#0B0B0C;-webkit-mask-image:linear-gradient(to right,transparent 0,#000 5%,#000 95%,transparent 100%),linear-gradient(to bottom,transparent 0,#000 4%,#000 96%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent 0,#000 5%,#000 95%,transparent 100%),linear-gradient(to bottom,transparent 0,#000 4%,#000 96%,transparent 100%);mask-composite:intersect}
-button[data-copied] .cp-t{display:inline}
-@media (max-width: 900px){.a-video{max-width:460px}}
+.hs-head{display:flex;flex-direction:column;align-items:center;text-align:center;gap:18px;max-width:900px;margin:0 auto 52px}
+.hs-h1{margin:0;font-size:56px;line-height:1.04;letter-spacing:-.035em;font-weight:750;text-wrap:balance}
+.hs-sub{margin:0;max-width:36em;font-size:19px;line-height:1.55;color:#B4B5B9}
+.hs-cmds{width:100%;max-width:640px;text-align:left}
+.hs-stage{position:relative;display:grid;grid-template-columns:440px minmax(0,1fr);align-items:center;max-width:1160px;margin:0 auto}
+.hs-chats{display:flex;flex-direction:column;gap:18px;position:relative;z-index:2}
+.hs-board{position:relative;margin-left:auto;z-index:1;overflow:clip;overflow-clip-margin:30px}
+@media (max-width: 1180px){.hs-stage{grid-template-columns:340px minmax(0,1fr)}}
+.hs-layer{position:absolute;left:0;top:0;width:100%}
+.hs-layer .ground{display:none}
+.hs-wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:0}
+.hs-wires path{fill:none;stroke-width:1.5;stroke-dasharray:3 7;stroke-linecap:round}
+.hs-chat{background:#111214;border:1px solid #2A2B2E;border-radius:12px;overflow:hidden;transform-origin:0 50%;box-shadow:0 18px 40px rgba(0,0,0,.35)}
+.hs-bar{height:30px;display:flex;align-items:center;gap:9px;padding:0 12px;border-bottom:1px solid #1F2023}
+.hs-dots{display:inline-flex;gap:5px}.hs-dots i{width:9px;height:9px;border-radius:5px;background:#2E2F34;display:block}
+.hs-title{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:#C4C5C9}
+.hs-app{margin-left:auto;font-size:11px;color:#8E8F95}
+.hs-pip{width:8px;height:8px;border-radius:4px}
+.hs-body{height:160px;padding:10px 14px;overflow:hidden;position:relative;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 16px);mask-image:linear-gradient(to bottom,transparent 0,#000 16px)}
+.hs-lines{display:flex;flex-direction:column}
+.hs-l{font:12px/19px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#B4B5B9;min-height:19px}
+.hs-l.u{color:#F2F2F3}.hs-l.a{color:#DADADF}.hs-l.d{color:#8E8F95}.hs-l.ok{color:#4CC38A}
+.is-chat .hs-l{font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-size:12.5px;line-height:1.4;white-space:normal}
+.is-chat .hs-l.ub{align-self:flex-end;background:#26272B;color:#F2F2F3;border-radius:10px;padding:4px 10px;margin:0 0 8px 70px}
+.is-chat .hs-l.ab{color:#DADADF;margin-bottom:6px}
+.hs-ask{border:1px solid #F0BE62;border-radius:8px;padding:8px 10px;overflow:hidden;background:rgba(240,190,98,.06);display:flex;flex-direction:column;gap:5px}
+.hs-ask-t{font:600 11.5px -apple-system,system-ui,sans-serif;color:#F0BE62}
+.hs-ask code{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:#F2F2F3}
+.hs-ask-b{display:flex;gap:6px}.hs-ask-b span{padding:2px 10px;border-radius:6px;border:1px solid #45464B;font:600 11.5px -apple-system,system-ui,sans-serif;color:#DADADF}
+.hs-ask-b .hs-allow.on{background:#F2F2F3;color:#0B0B0C;border-color:#F2F2F3}
+.sb-wrap{position:absolute;transform-origin:0 0;width:400px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#F2F2F3}
+.sb{width:400px;background:#0B0B0C;border:1px solid #2A2B2E;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;gap:1px;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+.sb-head{background:#131416;padding-bottom:12px}
+.sb-chrome{height:30px;display:flex;align-items:center;gap:8px;padding:0 12px;position:relative}
+.sb-dot{width:12px;height:12px;border-radius:6px}
+.sb-title{position:absolute;left:0;right:0;text-align:center;font-size:12px;color:#8D8E91}
+.sb-row{display:flex;align-items:center;gap:10px;padding:4px 14px 0;white-space:nowrap}
+.sb-bar{display:flex;gap:2px;height:6px;margin:8px 14px 0}.sb-bar span{min-width:0}
+.sb-counts{display:flex;gap:12px;padding:8px 14px 0;font-size:11.5px;color:#B4B5B9;white-space:nowrap}.sb-counts b{color:#F2F2F3}
+.sb-pip{display:inline-block;width:6px;height:6px;border-radius:3px;margin-right:5px}
+.sb-card{background:#131416;padding:12px 14px 13px}
+.sb-top{display:flex;align-items:center;gap:6px}
+.sb-num{font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#0B0B0C;padding:2px 5px;border-radius:2px}
+.sb-tag{font:600 9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;color:#9A9AA0;border:1px solid #45464B;padding:1px 4px}
+.sb-st{font:700 10px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;position:relative;display:inline-block}
+.sb-name{font-size:17px;font-weight:650;letter-spacing:-.01em;white-space:nowrap}.sb-name i{font-style:normal;color:#8D8E91}
+.sb-lines{display:flex;flex-direction:column;gap:3px}
+.sb-line{font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;display:flex;white-space:nowrap}
+.sb-g{flex:none;width:1.25em}.sb-fold{overflow:hidden}
+.sb-rw{position:relative;display:block}.sb-rw>.sb-b{position:absolute;left:0;top:0;width:100%}
+.sb-tile{position:absolute;width:40px;height:40px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (max-width: 900px){.hs-h1{font-size:38px}.hs-head{margin-bottom:40px}.hs-stage{grid-template-columns:1fr}.hs-chats,.hs-wires{display:none}.hs-board{width:100%;margin:0;overflow:hidden}}
 
 html{background:#0B0B0C}</style>
 </head>
@@ -53,21 +103,21 @@ html{background:#0B0B0C}</style>
 <a href="https://github.com/KiranPothana/session-board" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border: 1px solid #34353A; border-radius: 10px; font: 600 14px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; text-decoration: none; color: #F2F2F3"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>GitHub</a>
 </nav>
 
-<section class="a-hero" style="padding: 56px 0 96px">
-<div style="display: flex; flex-direction: column; gap: 26px">
+<section class="hs" style="padding: 24px 0 88px">
+<div class="hs-head">
 <span style="font: 700 11px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; letter-spacing: 0.14em; color: #4CC38A">CLAUDE CODE · MAC · OPEN SOURCE</span>
-<h1 class="a-h1" style="margin: 0; line-height: 1.02; letter-spacing: -0.035em; font-weight: 750">Know what every<br>session is doing.<br><span style="color: #7C7D83">Without opening one.</span></h1>
-<p style="margin: 0; max-width: 33em; font: 19px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #B4B5B9">One floating window gives each Claude Code chat a live stand-up: what it just did, what it’s doing, what’s next, and what’s waiting on you.</p>
-<div style="display: flex; flex-direction: column; gap: 12px; max-width: 560px">
-<div style="background: #131416; border: 1px solid #2A2B2E; border-radius: 12px; overflow: hidden"><div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 18px; border-top: 0">
-<span aria-hidden="true" style="flex: none; color: #5D5E63; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace">$</span><code style="flex: 1; min-width: 0; word-break: normal; overflow-wrap: normal; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #E6E6E9">claude plugin marketplace add KiranPothana/<wbr><span style="white-space: nowrap">session-board</span></code>
-<button aria-label="Copy: claude plugin marketplace add KiranPothana/session-board" style="flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 12.5px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span class="cp-t">Copy</span></button></div><div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px 12px 18px; border-top: 1px solid #2A2B2E">
-<span aria-hidden="true" style="flex: none; color: #5D5E63; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace">$</span><code style="flex: 1; min-width: 0; word-break: normal; overflow-wrap: normal; font: 13px/1.6 ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; color: #E6E6E9">claude plugin install <span style="white-space: nowrap">session-board</span>@<wbr><span style="white-space: nowrap">session-board</span></code>
-<button aria-label="Copy: claude plugin install session-board@session-board" style="flex: none; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 12.5px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span class="cp-t">Copy</span></button></div></div>
-<div style="display: flex; gap: 18px; align-items: center; font: 14px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; color: #8D8E91; flex-wrap: wrap"><a href="https://github.com/KiranPothana/session-board" style="display: inline-flex; align-items: center; gap: 7px; color: #F2F2F3; font-weight: 600; text-decoration: none"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>View on GitHub →</a><span>macOS 15+ · Claude Code 2.1.287+ · Apple’s command-line tools</span></div>
+<h1 class="hs-h1">Know what every session is doing.<br><span style="color: #7C7D83">Without opening one.</span></h1>
+<p class="hs-sub">One floating window gives each Claude Code chat a live stand-up: what it just did, what it’s doing, what’s next, and what’s waiting on you.</p>
+<div style="display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap">
+<a href="https://github.com/KiranPothana/session-board" style="display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 12px; background: #F2F2F3; color: #0B0B0C; font: 650 15px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; text-decoration: none"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>Get it on GitHub</a>
+<a href="#install" style="display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 18px; border-radius: 12px; border: 1px solid #34353A; color: #F2F2F3; font: 600 15px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif; text-decoration: none">Install in two commands ↓</a>
 </div>
 </div>
-<div class="a-media" style="display: flex; justify-content: center"><video class="a-video" autoplay muted loop playsinline disablepictureinpicture disableremoteplayback preload="auto" poster="hero.jpg" width="1080" height="1350" aria-label="Session Board at work: four Claude Code sessions, each line rewriting as the work moves, a side task, a popup when one needs you, and the highlight following the chat you open"><source src="hero.mp4" type="video/mp4"></video></div>
+<div class="hs-stage" role="img" aria-label="Four Claude Code chats at work on the left, each feeding its card on the Session Board on the right: summary lines rewriting as the work moves, a side task, cards moving as their state changes, a popup when one needs you, and the highlight following the chat you open">
+<div class="hs-chats"></div>
+<svg class="hs-wires" aria-hidden="true"></svg>
+<div class="hs-board"></div>
+</div>
 </section>
 
 <section style="padding: 24px 0 96px; display: flex; flex-direction: column; gap: 28px">
@@ -124,13 +174,7 @@ for (const b of document.querySelectorAll('button[aria-label^="Copy: "]')) {
     } catch (e) {}
   });
 }
-// Motion off: the film holds its first frame
-const v = document.querySelector('.a-video');
-const still = window.matchMedia('(prefers-reduced-motion: reduce)');
-v.muted = true;
-function hold() { if (still.matches) { v.removeAttribute('autoplay'); v.pause(); v.currentTime = 0; } else { v.play().catch(() => {}); } }
-v.addEventListener('canplay', hold, { once: true });
-hold(); still.addEventListener('change', hold);
 </script>
+<script src="hero.js"></script>
 </body>
 </html>
