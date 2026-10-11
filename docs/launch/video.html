@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session Board · launch video</title>
+<!--
+  The launch video, as a recording of a Mac: the desktop with its menu bar and Dock, Claude Desktop
+  in a window with the board floating on the right, then a swipe to a Space with four terminals
+  running Claude Code, where clicking each one moves the board's highlight to it.
+  Every frame is a pure function of the time, so render.mjs steps through it frame by frame and the
+  cut is exactly repeatable. window.apply(t) draws time t; window.DURATION and window.AUDIO tell
+  render.mjs the length and where each sound goes. Preview: ?t=6.2 for one moment, ?play to watch.
+-->
+<style>
+:root {
+  --gap: #0B0B0C; --cell: #131416; --text: #F2F2F3; --pre: #8D8E91; --muted: #9A9AA0; --soft: #B4B5B9;
+  --doing: #DADADF; --chipb: #45464B; --amber: #E8A93A; --amberT: #F0BE62; --green: #4CC38A; --idle: #8D8E91;
+  --violet: #C4B5FD; --violetB: #8B6CF0; --seg: #22232A;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0 }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000 }
+body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: var(--text) }
+
+#stage { position: absolute; inset: 0; overflow: hidden; background: #000 }
+#cam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0 }
+/* The Mac's screen: wallpaper, menu bar, Dock; the Spaces slide underneath the menu bar and Dock */
+#screen { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden }
+#wall { position: absolute; inset: 0;
+  background: radial-gradient(34% 30% at 50% 66%, rgba(255,196,130,.42) 0%, rgba(255,196,130,0) 70%),
+              radial-gradient(70% 62% at 50% 64%, #b9662d 0%, #84431f 30%, #4a2918 58%, #1d140e 82%, #0f0b08 100%) }
+.space { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px }
+#menubar { position: absolute; left: 0; right: 0; top: 0; height: 28px; background: rgba(28,20,14,.42); backdrop-filter: blur(24px);
+  display: flex; align-items: center; padding: 0 16px; gap: 18px; font-size: 13.5px; color: #fff; z-index: 40 }
+#menubar b { font-weight: 700 }
+#menubar .rt { margin-left: auto; display: flex; gap: 16px; align-items: center }
+#dock { position: absolute; left: 50%; bottom: 7px; transform: translateX(-50%); height: 72px; padding: 8px 10px; display: flex; gap: 9px; align-items: center;
+  background: rgba(255,255,255,.17); border: 1px solid rgba(255,255,255,.24); border-radius: 22px; backdrop-filter: blur(24px); z-index: 40 }
+#dock i { position: relative; display: block; width: 54px; height: 54px; border-radius: 13px; box-shadow: 0 2px 6px rgba(0,0,0,.3) }
+#dock i b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-style: normal; font-weight: 700; color: #fff; font-size: 24px }
+#dock i.run::after { content: ''; position: absolute; left: 50%; bottom: -7px; width: 4px; height: 4px; margin-left: -2px; border-radius: 2px; background: rgba(255,255,255,.8) }
+#dock .sep { width: 1px; height: 50px; background: rgba(255,255,255,.3) }
+
+/* Claude Desktop, in a window */
+#cwin { position: absolute; left: 0; top: 28px; width: 1920px; height: 966px; border-radius: 10px; overflow: hidden; background: #151515; color: #ECECEC;
+  box-shadow: 0 34px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.1) }
+#side { position: absolute; left: 0; top: 0; bottom: 0; width: 262px; background: #111111; border-right: 1px solid #222; padding: 48px 10px 0; overflow: hidden }
+#side .tl { position: absolute; left: 16px; top: 16px; display: flex; gap: 8px }
+#side .new { display: flex; align-items: center; gap: 8px; color: #d6d6d6; font-size: 14px; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px }
+#side .hd { font-size: 12px; color: #7d7d7d; padding: 10px 12px 6px }
+#side .it { position: relative; font-size: 14px; color: #c9c9c9; padding: 7px 12px; border-radius: 8px; margin-bottom: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+#side .it.old { color: #8f8f8f }
+#side .it .bgsel { position: absolute; inset: 0; border-radius: 8px; background: #262626; opacity: 0 }
+#side .it span { position: relative }
+#topbar { position: absolute; left: 262px; right: 0; top: 0; height: 52px; display: flex; align-items: center; padding: 0 22px; gap: 10px; background: #151515; z-index: 2 }
+#topbar .ttl { display: flex; align-items: center; gap: 9px; font-size: 15px; color: #ECECEC }
+#topbar .icons { margin-left: auto; display: flex; gap: 22px; color: #bdbdbd }
+#col { position: absolute; left: 262px; right: 0; top: 52px; bottom: 0 }
+.conv { position: absolute; left: 0; right: 0; top: 0; bottom: 142px; overflow: hidden; opacity: 0 }
+.conv .inner { position: absolute; left: 50%; width: 720px; margin-left: -360px; bottom: 22px; display: flex; flex-direction: column; gap: 16px; font-size: 15px; line-height: 1.6 }
+.conv .u { align-self: flex-end; max-width: 540px; background: #2B2B2B; color: #ECECEC; padding: 9px 15px; border-radius: 16px }
+.conv .a { color: #ECECEC }
+.conv code { font: 13px var(--mono); background: #262626; border: 1px solid #333; border-radius: 4px; padding: 0 4px }
+.conv ul { margin: -4px 0 0 20px; color: #ECECEC } .conv li { margin: 2px 0 }
+.conv pre { font: 13px/1.55 var(--mono); background: #1C1C1C; border: 1px solid #2E2E2E; border-radius: 10px; padding: 11px 14px; color: #D4D4D4; white-space: pre; overflow: hidden }
+.conv pre .k { color: #C792EA } .conv pre .s { color: #A5D6A7 } .conv pre .c { color: #6F6F6F }
+.conv .tool { color: #8E8E8E; display: flex; align-items: center; gap: 8px }
+.conv .tool .add { font: 600 11px var(--mono); color: #52C27C; background: #17311F; padding: 1px 5px; border-radius: 4px }
+.conv .tool .del { font: 600 11px var(--mono); color: #F07070; background: #3A1A1A; padding: 1px 5px; border-radius: 4px; margin-left: -6px }
+.conv .spin { color: #8E8E8E; display: flex; align-items: center; gap: 4px }
+.conv .spin .dots { position: relative; width: 22px; height: 16px; flex: none }
+.conv .spin .dots i { position: absolute; width: 5px; height: 5px; border-radius: 3px; background: #D97757 }
+#input { position: absolute; left: 50%; width: 740px; margin-left: -370px; bottom: 54px; height: 54px; border-radius: 14px; background: #1F1F1F; border: 1px solid #3A3A3A;
+  display: flex; align-items: center; padding: 0 18px; color: #8E8E8E; font-size: 15px }
+#input .ret { margin-left: auto }
+#below { position: absolute; left: 50%; width: 740px; margin-left: -370px; bottom: 20px; height: 22px; display: flex; align-items: center; gap: 16px; color: #A9A9A9; font-size: 13.5px }
+#below .r { margin-left: auto; display: flex; gap: 16px; align-items: center; color: #D8D8D8 }
+#below .sp { width: 13px; height: 13px; border-radius: 7px; border: 2px solid #2B6FD6; border-right-color: transparent; display: inline-block }
+
+/* Four terminals (Terminal's light theme) running Claude Code */
+.term { position: absolute; width: 948px; height: 428px; border-radius: 11px; overflow: hidden; background: #FFFFFF; color: #1D1D1F;
+  box-shadow: 0 24px 60px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.18) }
+.term .tb { position: relative; height: 28px; background: #F6F6F6; border-bottom: 1px solid #DCDCDC; display: flex; align-items: center; gap: 8px; padding: 0 11px }
+.term .tb .tt { position: absolute; left: 0; right: 0; top: 0; line-height: 28px; text-align: center; font-size: 12.5px; font-weight: 600; color: #A3A3A3; white-space: nowrap }
+.term .lights { display: flex; gap: 8px; position: relative }
+.term .lights i { width: 12px; height: 12px; border-radius: 6px; display: block; background: #DCDCDC; border: 1px solid #CACACA }
+/* The newest output sits at the bottom and older lines scroll off the top, as in a real terminal */
+.term .body { position: absolute; left: 0; right: 0; top: 29px; bottom: 0; overflow: hidden; font: 12.6px/1.47 var(--mono); white-space: pre }
+.term .body .scr { position: absolute; left: 14px; right: 14px; bottom: 8px }
+.term .body .m { color: #8E8E93 } .term .body .o { color: #C9663E } .term .body .g { color: #2E9E5B } .term .body b { font-weight: 700 }
+.term .body .y { color: #B7791F } .term .body .bl { color: #3478F6 }
+.term .act { position: absolute; inset: 0; pointer-events: none; opacity: 0 }
+.term .act .t2 { position: absolute; left: 0; right: 0; top: 0; height: 28px; text-align: center; line-height: 28px; font-size: 12.5px; font-weight: 600; color: #1D1D1F; background: #E8E8E8; border-bottom: 1px solid #D0D0D0 }
+.term .act .l2 { position: absolute; left: 11px; top: 8px; display: flex; gap: 8px }
+.term .act .l2 i { width: 12px; height: 12px; border-radius: 6px; display: block }
+
+/* The board: the app's real tokens, at its real size */
+#boardWrap { position: absolute; left: 1544px; top: 136px; transform-origin: 0 0; z-index: 30 }
+#board { position: relative; width: 360px; height: 750px; background: var(--gap); border: 1px solid #2A2B2E; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; gap: 1px;
+  box-shadow: 0 40px 100px rgba(0,0,0,.6) }
+#head { background: var(--cell); padding-bottom: 12px; flex: none }
+#board .tbar { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 12px; position: relative }
+#board .tbar i { width: 12px; height: 12px; border-radius: 6px; display: block }
+#board .tbar .t { position: absolute; left: 0; right: 0; text-align: center; font-size: 12px; color: var(--pre) }
+.hrow { position: relative; height: 18px; margin: 4px 14px 0 }
+.hrow > div { position: absolute; inset: 0; display: flex; align-items: center; gap: 10px; white-space: nowrap }
+.hrow b { font-size: 13px; font-weight: 700 }
+.hrow .n { font-size: 12px; color: var(--muted) }
+.hrow .ctl { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px }
+.kbd { font: 600 10px var(--mono); padding: 1px 4px; border: 1px solid var(--chipb); border-radius: 4px }
+#hbar { overflow: hidden }
+.bar { display: flex; height: 6px; margin: 8px 14px 0; border-radius: 3px; overflow: hidden }
+.bar span { display: block; height: 6px; flex-basis: 0 }
+.legend { display: flex; margin: 8px 14px 0; font-size: 11.5px; color: var(--soft); white-space: nowrap; height: 15px }
+.legend > span { display: flex; align-items: center; gap: 5px; overflow: hidden; margin-right: 12px }
+.legend i { width: 6px; height: 6px; border-radius: 3px; display: block; flex: none }
+.legend b { color: var(--text) }
+#strip { overflow: hidden; height: 0; flex: none; background: linear-gradient(rgba(232,169,58,.10), rgba(232,169,58,.10)), var(--cell); box-shadow: inset 3px 0 0 var(--amber) }
+#strip > div { display: flex; align-items: center; gap: 8px; padding: 9px 14px; white-space: nowrap; height: 37px }
+#body { position: relative; overflow: hidden; display: grid; align-items: start; flex: 1; background: var(--cell) }
+#paneS { grid-area: 1 / 1; overflow: hidden; display: flex; flex-direction: column; gap: 1px; background: var(--gap) }
+#cards { position: relative; display: flex; flex-direction: column; gap: 1px }
+.card { position: relative; background: var(--cell); padding: 12px 14px 13px; overflow: hidden }
+.card .tint { position: absolute; inset: 0; opacity: 0 }
+.card .in { position: relative; display: flex; flex-direction: column; gap: 6px }
+.r1 { display: flex; align-items: center; gap: 6px; height: 16px }
+.sq { font: 700 10px var(--mono); padding: 2px 5px; border-radius: 2px; color: #0B0B0C; display: inline-block }
+.chip { font: 600 9px var(--mono); letter-spacing: .1em; color: var(--muted); border: 1px solid var(--chipb); padding: 1px 4px; white-space: nowrap }
+.chip.side { color: var(--violet); border-color: var(--violetB); font-weight: 700; display: inline-block }
+.st { margin-left: auto; font: 700 10px var(--mono); letter-spacing: .12em; white-space: nowrap }
+.st .tm { letter-spacing: 0 }
+.nm { font-size: 17px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap }
+.nm .p { color: var(--pre) }
+.lines { display: flex; flex-direction: column; font: 11.5px var(--mono) }
+.ln { height: 20px; overflow: hidden; display: flex; align-items: center; white-space: nowrap }
+.ln .g { width: 14px; flex: none }
+.ln .play { font-size: 8px; color: var(--green) }
+#ring { position: absolute; left: 0; right: 0; border: 2px solid transparent; pointer-events: none; z-index: 5; opacity: 0 }
+#paneT { grid-area: 1 / 1; overflow: hidden; background: var(--gap); display: flex; flex-direction: column; gap: 1px }
+.cellS { background: var(--cell); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px }
+.lab { font: 700 10px var(--mono); letter-spacing: .14em; color: var(--muted) }
+.vbars { display: flex; align-items: flex-end; gap: 3px; height: 20px }
+.vbars .mine { font-size: 11px; font-weight: 600; color: var(--soft); background: var(--seg); border-radius: 4px; padding: 0 7px; height: 20px; display: flex; align-items: center; margin-right: 5px }
+.vbars i { width: 14px; border-radius: 2px; background: var(--seg); display: block }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chips span { font-size: 11.5px; font-weight: 600; padding: 4px 8px; border-radius: 5px; white-space: nowrap; background: var(--seg); color: var(--soft) }
+#chooser { position: relative; margin-left: 20px; padding: 10px; border-radius: 8px; background: #101113; display: flex; flex-direction: column; gap: 8px }
+#pop { position: absolute; width: 236px; background: #1E1F23; border: 1px solid #3A3B40; border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.55); padding: 14px; z-index: 20; opacity: 0; transform-origin: 18px 0 }
+#pop .tt { font-size: 12px; font-weight: 600; margin-bottom: 10px }
+#pop .grid { display: grid; grid-template-columns: repeat(6, 24px); gap: 8px; padding: 3px }
+#pop .grid i { width: 24px; height: 24px; border-radius: 4px; display: block }
+#pop .sel { position: absolute; width: 30px; height: 30px; border-radius: 6px; border: 2px solid #F2F2F3; opacity: 0 }
+
+#cursor { position: absolute; left: 0; top: 0; width: 26px; height: 26px; z-index: 50; opacity: 0; filter: drop-shadow(0 2px 4px rgba(0,0,0,.45)) }
+#ripple { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 22px; border: 2px solid rgba(255,255,255,.85); z-index: 49; opacity: 0 }
+#keycap { position: absolute; left: 0; right: 0; top: 880px; display: flex; justify-content: center; z-index: 60; opacity: 0 }
+#keycap span { font: 700 40px var(--mono); color: #fff; background: rgba(30,30,34,.86); border: 1px solid rgba(255,255,255,.18); border-radius: 14px; padding: 12px 22px; box-shadow: 0 20px 50px rgba(0,0,0,.5) }
+
+/* Captions: a pill under the menu bar */
+.cap { position: absolute; left: 0; right: 0; top: 46px; display: flex; justify-content: center; opacity: 0; z-index: 70 }
+.cap span { font-size: 42px; font-weight: 700; letter-spacing: -.02em; white-space: nowrap; padding: 10px 28px; border-radius: 999px;
+  background: rgba(14,14,18,.8); border: 1px solid rgba(255,255,255,.12); backdrop-filter: blur(18px); box-shadow: 0 16px 40px rgba(0,0,0,.4) }
+.cap em { font-style: normal }
+#end { position: absolute; inset: 0; background: rgba(8,8,12,.86); display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; z-index: 80 }
+#end img { width: 132px; height: 132px; border-radius: 30px; margin-bottom: 30px }
+#end .w { font-size: 84px; font-weight: 750; letter-spacing: -.035em }
+#end .s { font-size: 30px; color: #c9cad0; margin-top: 14px; letter-spacing: -.01em }
+#end .f { margin-top: 40px; display: flex; gap: 14px }
+#end .f span { font: 600 17px var(--mono); color: #dadadf; border: 1px solid #3a3b40; border-radius: 8px; padding: 9px 14px }
+#end .u { margin-top: 26px; font: 20px var(--mono); color: #9a9aa0 }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="cam">
+    <div id="screen">
+      <div id="wall"></div>
+
+      <div class="space" id="space1">
+        <div id="cwin">
+          <div id="side">
+            <div class="tl"><i style="width:12px;height:12px;border-radius:6px;background:#FF5F57;display:block"></i><i style="width:12px;height:12px;border-radius:6px;background:#FEBC2E;display:block"></i><i style="width:12px;height:12px;border-radius:6px;background:#28C840;display:block"></i></div>
+            <div class="new"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New session</div>
+            <div class="hd">Today</div>
+            <div id="sideList"></div>
+            <div class="hd">Yesterday</div>
+            <div class="it old"><span>Investor update draft</span></div><div class="it old"><span>Fix flaky checkout test</span></div>
+            <div class="it old"><span>Refactor auth middleware</span></div><div class="it old"><span>Pricing page copy</span></div>
+            <div class="hd">Previous 7 days</div>
+            <div class="it old"><span>Upgrade to React 19</span></div><div class="it old"><span>Queue retry backoff</span></div>
+            <div class="it old"><span>Dark mode for settings</span></div><div class="it old"><span>CSV export for reports</span></div>
+            <div class="it old"><span>Onboarding email sequence</span></div><div class="it old"><span>Rate limiter for the public API</span></div>
+            <div class="it old"><span>Webhook signature checks</span></div><div class="it old"><span>Search ranking tweaks</span></div>
+            <div class="it old"><span>Sentry noise cleanup</span></div><div class="it old"><span>Postgres 17 upgrade plan</span></div>
+            <div class="hd">Previous 30 days</div>
+            <div class="it old"><span>Billing portal redesign</span></div><div class="it old"><span>SSO with Okta</span></div>
+            <div class="it old"><span>Image upload resizing</span></div><div class="it old"><span>Audit log export</span></div>
+            <div class="it old"><span>Android deep links</span></div><div class="it old"><span>Load test the checkout API</span></div>
+          </div>
+          <div id="topbar">
+            <div class="ttl"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg><span id="ctitle"></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+            <div class="icons"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 8v8M8 12h8"/></svg><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5M5 14v5h14v-5"/></svg><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></div>
+          </div>
+          <div id="col">
+            <div id="convs"></div>
+            <div id="input">Type / for commands<span class="ret">⏎</span></div>
+            <div id="below"><span>+</span><span>🎙 ⌄</span><span>Auto</span><span class="r"><span>Opus 5.5</span><span>High</span><span class="sp"></span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space" id="space2"></div>
+
+      <div id="boardWrap"><div id="board">
+        <div id="head">
+          <div class="tbar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i><span class="t">Session Board</span></div>
+          <div class="hrow">
+            <div id="hdrS"><b>Sessions</b><span class="n">5 open</span><span class="ctl">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+              <span style="display:flex;align-items:center;gap:4px"><span class="kbd">⌃⌥S</span>hide</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></span></div>
+            <div id="hdrT" style="opacity:0"><span style="display:flex;align-items:center;gap:2px;font-size:12.5px;color:var(--soft)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>Sessions</span><b>Settings</b></div>
+          </div>
+          <div id="hbar"><div class="bar"><span id="segA" style="background:var(--amber)"></span><span id="segW" style="background:var(--green)"></span><span id="segI" style="background:var(--idle)"></span></div>
+          <div class="legend"><span id="lgA"><i style="background:var(--amber)"></i>Needs you <b>1</b></span><span id="lgW"><i style="background:var(--green)"></i>Working <b id="nW">3</b></span><span id="lgI"><i style="background:var(--idle)"></i>Idle <b>2</b></span></div></div>
+        </div>
+        <div id="strip"><div><span class="sq" id="stripSq">01</span><span style="font-size:13px;font-weight:650;letter-spacing:-.01em"><span style="color:var(--pre)">Acme </span>Payments API</span><span style="flex:1"></span><span class="st" style="color:var(--amberT)">NEEDS YOU <span class="tm">· now</span></span></div></div>
+        <div id="body">
+          <div id="paneS"><div id="cards"><div id="ring"></div></div></div>
+          <div id="paneT">
+            <div class="cellS"><div class="lab">THEME</div><div style="display:flex;align-items:center"><span style="font-size:11.5px;color:var(--muted);flex:1">Like Claude Desktop until you pick one.</span><span style="display:flex;padding:2px;gap:2px;border-radius:6px;background:#22232A;font-size:11.5px;font-weight:600"><span style="padding:4px 9px;border-radius:4px;color:#B4B5B9">Light</span><span style="padding:4px 9px;border-radius:4px;background:#F2F2F3;color:#131416">Dark</span></span></div></div>
+            <div class="cellS">
+              <div class="lab">SOUNDS</div>
+              <div style="display:flex;align-items:center"><span style="font-size:12.5px;font-weight:600;flex:1">Alert volume</span><span id="volPct" style="font:600 11px var(--mono);color:var(--soft)">Mine</span></div>
+              <div class="vbars" id="vbars"><span class="mine" id="vMine">Mine</span></div>
+              <div style="font-size:11px;color:var(--muted)">Sounds that play on their own play at this volume, then yours goes back.</div>
+              <div style="display:flex;align-items:flex-start;gap:10px;margin-top:6px"><span style="width:10px;display:flex;justify-content:center;padding-top:5px"><i style="width:6px;height:6px;border-radius:3px;background:var(--amber);display:block"></i></span>
+                <div style="flex:1"><div style="font-size:12.5px;font-weight:600">Needs you</div><div style="font-size:11px;color:var(--muted)">A permission prompt or a question</div><div style="margin-top:4px;font:600 11px var(--mono)" id="sndName">Mallet</div></div>
+                <span style="font:600 11px var(--mono);color:var(--doing);border:1px solid var(--chipb);border-radius:4px;padding:2px 6px">▶ Play</span></div>
+              <div id="chooser"><div class="lab">SESSION BOARD · MAC ALERTS · KENNEY</div><div class="chips" id="chips"></div></div>
+            </div>
+          </div>
+        </div>
+        <div id="pop"><div class="tt">Colour for this session</div><div class="grid" id="grid"></div><div class="sel" id="popSel"></div></div>
+      </div></div>
+
+      <div id="menubar"><svg width="15" height="18" viewBox="0 0 20 24" style="margin:0 4px 3px 2px"><path fill="#fff" d="M10 6.5C8.6 6.5 7.6 5.8 6.3 5.8 3.8 5.8 1.5 8 1.5 11.8c0 4.7 3.1 10.2 5.5 10.2 1.2 0 1.7-.8 3-.8s1.8.8 3 .8c2.2 0 4.4-3.7 5.2-6-1.9-.8-3.2-2.6-3.2-4.7 0-1.9 1-3.4 2.5-4.2-1-1.2-2.5-1.3-3.5-1.3-1.6 0-2.6.7-4 .7zM10.2 5.5c-.1-1.9 1.4-3.6 3.4-3.9.2 2-1.4 3.8-3.4 3.9z"/></svg><b id="appName">Claude</b><span>File</span><span>Edit</span><span>View</span><span>Window</span><span>Help</span>
+        <span class="rt">
+          <svg width="22" height="12" viewBox="0 0 26 13"><rect x=".5" y=".5" width="22" height="12" rx="3" fill="none" stroke="#fff" stroke-opacity=".9"/><rect x="2.5" y="2.5" width="18" height="8" rx="1.5" fill="#fff"/><rect x="23.5" y="4" width="2" height="5" rx="1" fill="#fff" fill-opacity=".8"/></svg>
+          <svg width="16" height="12" viewBox="0 0 24 18" fill="#fff"><path d="M12 17.5 15.2 13.4a4.6 4.6 0 0 0-6.4 0Z"/><path d="M12 7.2a10.4 10.4 0 0 1 7.6 3.3l1.9-2.4A13.5 13.5 0 0 0 12 4 13.5 13.5 0 0 0 2.5 8.1l1.9 2.4A10.4 10.4 0 0 1 12 7.2Z" opacity=".9"/><path d="M12 .5A17.6 17.6 0 0 1 24 5.2l-1.9 2.4A14.6 14.6 0 0 0 12 3.6 14.6 14.6 0 0 0 1.9 7.6L0 5.2A17.6 17.6 0 0 1 12 .5Z" opacity=".75"/></svg>
+          <svg width="16" height="14" viewBox="0 0 24 20" fill="none" stroke="#fff" stroke-width="2"><rect x="1" y="1" width="9" height="7" rx="3.5"/><rect x="14" y="1" width="9" height="7" rx="3.5"/><rect x="1" y="12" width="9" height="7" rx="3.5"/><rect x="14" y="12" width="9" height="7" rx="3.5"/></svg>
+          <span>Thu Oct 8&nbsp;&nbsp;9:31 PM</span></span></div>
+      <div id="dock"></div>
+
+      <svg id="cursor" viewBox="0 0 24 24"><path d="M5 2.5 L5 19.5 L9.3 15.6 L12.2 21.8 L15 20.5 L12.2 14.4 L18.2 14.2 Z" fill="#000" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <div id="ripple"></div>
+    </div>
+  </div>
+  <div id="keycap"><span>⌃ ⌥ S</span></div>
+  <div id="caps"></div>
+  <div id="end">
+    <img src="assets/icon.png" alt="">
+    <div class="w">Session Board</div>
+    <div class="s">Every Claude Code session. One glance.</div>
+    <div class="f"><span>Free</span><span>Open source</span><span>macOS</span></div>
+    <div class="u">github.com/KiranPothana/session-board</div>
+  </div>
+</div>
+
+<script>
+// ---------- The sessions ----------
+const COL = { Blue: '#4B92FF', Pink: '#F472B6', Teal: '#2EC4B6', Magenta: '#E05BE0', Sky: '#38BDF8', Coral: '#FF8A65' }
+const SESSIONS = [
+  { id: 'c1', pre: 'Acme ', name: 'Payments API', colour: COL.Blue, chip: 'RC', st: ['WORKING', '4m'] },
+  { id: 'c2', pre: 'Acme ', name: 'Mobile App', colour: COL.Pink, chip: 'RC', st: ['WORKING', '2m'] },
+  { id: 'c3', pre: 'Acme ', name: 'Landing Page', colour: COL.Teal, chip: 'RC', st: ['WORKING', '7m'] },
+  { id: 'c4', pre: '', name: 'Ops console tests', colour: COL.Magenta, chip: 'CLI', st: ['IDLE', '1m'] },
+  { id: 'c5', pre: '', name: 'Docs site', colour: COL.Sky, chip: 'DESKTOP', st: ['IDLE', '9m'] },
+]
+// The Claude Desktop chats: long, scrolled conversations. u you · a Claude · tool a collapsed tool row
+// (+adds −dels) · list bullets · code a code block · spin the working line
+const CHATS = {
+  c1: [
+    ['u', 'the refund endpoint double-charges when the client retries. add idempotency keys'],
+    ['a', 'I\'ll trace the refund path first to see where a retry can slip through.'],
+    ['tool', 'Read refunds.ts, ledger.ts, payments.test.ts'], ['tool', 'Searched for "refundId" in src/'],
+    ['a', 'Found it. <code>POST /refunds</code> writes the ledger entry before it checks whether this refund was already processed, so a retry that lands within the same second writes a second entry, and Stripe\'s retry header is ignored. The plan:'],
+    ['list', 'Accept an <code>Idempotency-Key</code> header and store it with the refund', 'Return the stored result when the same key comes back', 'Reject a reused key with a different body (409)'],
+    ['tool', 'Edited refunds.ts, idempotency.ts, refunds.test.ts', 48, 6],
+    ['code', '<span class="k">const</span> existing = <span class="k">await</span> keys.find(req.headers[<span class="s">\'idempotency-key\'</span>])\n<span class="k">if</span> (existing) <span class="k">return</span> res.status(existing.status).json(existing.body)'],
+    ['tool', 'Ran npm test -- refunds'],
+    ['a', 'All 38 refund tests pass, including three new ones: a retry within one second, a retry after a timeout, and a reused key with a different amount.'],
+    ['u', 'great, run the migration on staging too'],
+    ['a', 'The migration adds an <code>idempotency_keys</code> table with a unique index on <code>(key, merchant_id)</code>. Running it on staging now.'],
+    ['spin', 'Running the refund migration', '1m 12s']],
+  c2: [
+    ['u', 'the push notification permission prompt shows twice on first launch'],
+    ['a', 'Both the onboarding screen and the app delegate ask for permission. I\'ll keep the onboarding one, since it explains why first.'],
+    ['tool', 'Edited AppDelegate.swift, OnboardingView.swift', 3, 11],
+    ['a', 'It asks once now. I tested a fresh install on the simulator, and the prompt only appears after the "Stay in the loop" screen.'],
+    ['u', 'ship the build to TestFlight'],
+    ['a', 'Before building I\'ll check the release config and anything tagged for this version.'],
+    ['tool', 'Read Info.plist, Fastfile, AuthCallback.swift'], ['tool', 'Searched for "acme-staging" in ios/'],
+    ['a', 'The release build fails on the login redirect: the callback URL scheme still points at the staging app, so the OAuth hand-off never comes back to the production bundle. Two other things to fix on the way:'],
+    ['list', 'The build number is still 213, the same as the last upload', 'The push entitlement is missing from the release profile'],
+    ['tool', 'Edited AuthCallback.swift, Info.plist, Release.entitlements', 12, 4],
+    ['code', '<span class="k">static let</span> scheme = Bundle.main.isProduction ? <span class="s">"acme"</span> : <span class="s">"acme-staging"</span>'],
+    ['tool', 'Ran xcodebuild test -scheme AcmeRelease'],
+    ['a', 'Tests pass on the iOS 18 and 19 simulators. The login flow comes back to the app in both. Bumped the build to 214.'],
+    ['tool', 'Ran fastlane beta'],
+    ['a', 'Fixed. Building the release now; I\'ll upload it as soon as it signs.'],
+    ['spin', 'Building the release', '2m 03s']],
+  c3: [
+    ['u', 'the features grid looks cramped on tablets'],
+    ['a', 'Between 768 and 1024px the grid keeps three columns, so each card gets about 210px. I\'ll drop to two columns there.'],
+    ['tool', 'Edited Features.tsx, features.css', 14, 5],
+    ['code', '@media (max-width: <span class="s">1024px</span>) { .features { grid-template-columns: <span class="k">repeat</span>(2, 1fr) } }'],
+    ['a', 'Checked it at 768, 834 and 1024px: two columns, and nothing wraps mid-word.'],
+    ['u', 'lay out the pricing section'],
+    ['a', 'Three plans side by side, with the comparison table underneath. I\'ll match the spacing of the features section so the page keeps one rhythm.'],
+    ['tool', 'Read Hero.tsx, Features.tsx, tokens.css'],
+    ['a', 'The features section uses a 12-column grid with 32px gutters; the cards will use the same, so the plans line up with the feature columns above them.'],
+    ['tool', 'Edited Pricing.tsx, PlanCard.tsx, pricing.css', 96, 0],
+    ['code', '&lt;<span class="k">PlanCard</span> name=<span class="s">"Team"</span> price={24} highlighted features={team} /&gt;'],
+    ['list', 'Cards share one height, so the buttons line up', 'The middle plan gets the accent border and a "Most popular" tag', 'The table collapses to tabs below 720px'],
+    ['u', 'there\'s a typo in the hero, fix that first'],
+    ['a', 'On it. "Ship faster with confidance" becomes "confidence". The typo first, then back to the pricing section.'],
+    ['tool', 'Edited Hero.tsx', 1, 1],
+    ['spin', 'Fixing the hero typo', '0m 18s']],
+  c5: [
+    ['u', 'which pages still mention the old install command?'],
+    ['tool', 'Searched for "npm install -g" in docs/'],
+    ['a', 'Four pages: install, upgrading, troubleshooting and the FAQ. I updated all four to the plugin command and left a note on the upgrading page for people on the old version.'],
+    ['tool', 'Edited install.md, upgrading.md, troubleshooting.md, faq.md', 9, 9],
+    ['u', 'draft the new quick-start'],
+    ['a', 'Three steps: install, your first session, and reading the board. Each step gets one command and one screenshot.'],
+    ['tool', 'Read README.md, docs/install.md, docs/board.md'],
+    ['a', 'The install page already covers Homebrew; the quick-start can link there and stay short. What each step shows:'],
+    ['list', 'Install: one command, and what you should see after', 'First session: a real prompt, and the card it makes', 'The board: the colours, and what needs you'],
+    ['tool', 'Edited quick-start.md, sidebar.json', 142, 0],
+    ['code', '<span class="c"># Install</span>\nclaude plugin install session-board'],
+    ['tool', 'Ran npm run docs:build'],
+    ['a', 'The docs build cleanly and every link resolves.'],
+    ['a', 'It\'s up as PR #42. Have a look when you get a chance; screenshots for each step come after.']],
+}
+// The four terminals: the sessions that run in Terminal (the RC ones are on Claude Desktop too).
+// Each shows the same moment its card shows: c1 stopped on a permission prompt, c2 uploading,
+// c3 on the side task, c4 done and waiting for the next prompt.
+const RULE = '<span class="m">' + '─'.repeat(80) + '</span>'
+const FOOT = `${RULE}\n<span class="m">❯</span> PROMPT\n${RULE}\n  <span class="y">▸▸ auto mode on</span><span class="m"> (shift+tab to cycle) · ← for agents</span>`
+const TERMS = [
+  { id: 'c1', x: 8, y: 130, title: 'acme — ✳ Acme Payments API — node ◂ claude — 121×20', body:
+`<span class="o">⏺</span> <b>Update</b>(src/refunds/refunds.ts)
+  <span class="m">⎿  Updated with 48 additions and 6 removals</span>
+
+<span class="o">⏺</span> <b>Bash</b>(npm test -- refunds)
+  <span class="m">⎿  Tests  38 passed (38)</span>
+
+ All 38 refund tests pass, including three new ones.
+
+<span class="m">✻ Brewed for 1m 48s · done 9:29 PM</span>
+
+<span class="m">❯</span> great, run the migration on staging too
+
+<span class="o">⏺</span> The migration adds an idempotency_keys table with a unique
+  index on (key, merchant_id). Running it on staging now.
+
+${RULE}
+ <b>Bash command</b>
+
+   npm run migrate:staging
+   <span class="m">Run the idempotency_keys migration on staging</span>
+
+ Do you want to proceed?
+ <span class="bl">❯ 1. Yes</span>
+   2. Yes, and don't ask again for npm run migrate:staging commands
+   3. No, and tell Claude what to do differently <span class="m">(esc)</span>` },
+  { id: 'c2', x: 964, y: 130, title: 'acme — ✳ Acme Mobile App — node ◂ claude — 121×20', body:
+` The release build failed on the login redirect. The callback scheme
+ still pointed at the staging app, so the sign-in hand-off never came
+ back to the production bundle.
+
+ Fixed three things before building:
+ – <b>The URL scheme</b> now follows the build: acme or acme-staging.
+ – <b>The build number</b> is 214 (213 was already uploaded).
+ – <b>The push entitlement</b> is back in the release profile.
+
+<span class="o">⏺</span> <b>Bash</b>(xcodebuild test -scheme AcmeRelease)
+  <span class="m">⎿  ** TEST SUCCEEDED ** (iOS 18.4, iOS 19.0)</span>
+
+<span class="o">⏺</span> <b>Bash</b>(fastlane beta)
+  <span class="m">⎿  Archived AcmeRelease 214 · signed</span>
+     <span class="m">Uploading to App Store Connect…</span>
+
+<span class="o">✻ Uploading to TestFlight… (2m 41s · esc to interrupt)</span>
+${FOOT.replace('PROMPT', '')}` },
+  { id: 'c3', x: 8, y: 566, title: 'acme — ✳ Acme Landing Page — node ◂ claude — 121×20', body:
+` Laid out the pricing section under the features grid:
+
+ – <b>Three plans</b> side by side, one height, buttons aligned.
+ – <b>Team</b> gets the accent border and the "Most popular" tag.
+ – <b>The comparison table</b> collapses to tabs below 720px.
+
+<span class="o">⏺</span> <b>Update</b>(src/components/Pricing.tsx)
+  <span class="m">⎿  Updated with 96 additions</span>
+
+<span class="m">❯</span> there's a typo in the hero, fix that first
+
+<span class="o">⏺</span> On it. "confidance" becomes "confidence". The typo first,
+  then back to the pricing section.
+
+<span class="o">⏺</span> <b>Update</b>(src/components/Hero.tsx)
+  <span class="m">⎿  Updated with 1 addition and 1 removal</span>
+
+<span class="o">✻ Fixing the hero typo… (18s · esc to interrupt)</span>
+${FOOT.replace('PROMPT', '')}` },
+  { id: 'c4', x: 964, y: 566, title: 'ops-console — ✳ Ops console tests — node ◂ claude — 121×20', body:
+`<span class="m">❯</span> run the whole browser suite, split it across agents
+
+<span class="o">⏺</span> Splitting the 1,180 tests across 20 agents in one workflow.
+
+<span class="g">⏺</span> <b>Workflow</b>(browser suite · 20 agents)
+  <span class="m">⎿  Running in the background</span>
+
+<span class="m">✻ Brewed for 9s · done 9:26 PM</span>
+
+<span class="g">⏺</span> <b>Workflow finished</b> · browser suite · 20 agents
+  <span class="m">⎿  1,180 passed · 0 failed · 3m 41s</span>
+
+<span class="o">⏺</span> All 1,180 browser tests pass. checkout.spec passed in all
+  20 shards, so the fixed wait holds.
+
+<span class="m">✻ Brewed for 6s · done 9:30 PM</span>
+${FOOT.replace('PROMPT', '<span id="typed"></span><span>▊</span>')}` },
+]
+// Older sidebar chats, and Dock icons (generic, not any company's)
+const DOCK = [['#2f8cff,#1460d6', '☺'], ['#f7f7f7,#d9d9d9', '<span style="color:#e33;font-size:13px;font-weight:700;position:absolute;top:6px">OCT</span><span style="color:#222;font-size:26px;margin-top:12px">8</span>'],
+  ['#5aa8ff,#2a6be8', '✉'], ['#ffd86b,#f5b52a', '✎'], ['#2b2b2b,#111', '<span style="font:700 20px var(--mono)">&gt;_</span>', 'run'], ['#e98a63,#cc5d3a', '✳', 'run'],
+  ['#47c06e,#22914b', '✆'], ['#7b6cff,#5240d8', '♪'], ['#3dc0d6,#1d8aa6', '◎'], ['#ff6b8a,#d6365b', '❤'], ['#9aa4b8,#6b7488', '⚙'], ['sep'], ['#e9e9ee,#c9c9d2', '🗑']]
+const SWATCHES = ['#4B92FF','#9B7CFF','#2EC4B6','#F472B6','#F0605A','#F28C3B','#5CCB6A','#38BDF8','#7C83FF','#F5C542','#FB7185','#FF8A65','#5EE6B0','#A3E635','#22D3EE','#B9A6FF','#E05BE0','#B57BD9','#E5484D','#FFB385','#D9B98C','#B5BD5A','#3FA36B','#3B82C4','#8CA3BF','#94A3B8','#A1A1AA','#C08A5B','#40E0D0','#D946EF']
+const CHIPS = ['Default · Mallet','Mallet','Soft chime','Bell','Glass','Ping','Hero','Submarine','Purr','Funk','Pop','Confirm 1','Question 2','Rise','Bong','+ Add your own…']
+// Every line any card shows over the video, collapsed until its moment
+const LINES = {
+  c1: [['ask', '?', 'Allow: run the migration on staging', 'var(--amberT)', 700], ['run', 'play', 'Running the refund migration', 'var(--doing)'], ['done', '✓', 'Added idempotency keys', 'var(--muted)']],
+  c2: [['run', 'play', 'Building the release', 'var(--doing)'], ['done', '✓', 'Fixed the login redirect', 'var(--muted)']],
+  c3: [['side', '↪', 'Fixing the typo you spotted', 'var(--violet)'], ['paused', '⏸', 'Paused: Pricing section layout', 'var(--muted)'], ['run', 'play', 'Pricing section layout', 'var(--doing)'], ['next', '·', 'Hero copy pass', 'var(--soft)']],
+  c4: [['wf', '◷', '', 'var(--doing)'], ['pass', '✓', 'All 1,180 browser tests pass', 'var(--muted)']],
+  c5: [['you', '!', 'Review the new quick-start', 'var(--amberT)'], ['done', '✓', 'Drafted the quick-start', 'var(--muted)'], ['next', '·', 'Screenshots for each step', 'var(--soft)']],
+}
+
+const $ = (s) => document.querySelector(s)
+const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e }
+const DESKTOP_CHATS = ['c1', 'c2', 'c3', 'c5']
+
+// Claude Desktop: the sidebar's Today group and each chat
+DESKTOP_CHATS.forEach((id) => {
+  const s = SESSIONS.find((x) => x.id === id)
+  const it = h('div', 'it'); it.id = 'it-' + id
+  it.innerHTML = `<div class="bgsel"></div><span>${s.pre}${s.name}</span>`
+  $('#sideList').appendChild(it)
+  const cv = h('div', 'conv'); cv.id = 'cv-' + id
+  cv.innerHTML = '<div class="inner">' + CHATS[id].map(([k, ...rest]) =>
+    k === 'tool' ? `<div class="tool">${rest[0]}${rest[1] !== undefined ? ` <span class="add">+${rest[1]}</span><span class="del">−${rest[2]}</span>` : ''} ›</div>`
+    : k === 'spin' ? `<div class="spin"><span class="dots"><i style="left:0;top:5px"></i><i style="left:7px;top:1px"></i><i style="left:14px;top:5px"></i><i style="left:7px;top:10px"></i></span>${rest[0]} <span style="color:#6f6f6f">${rest[1]}</span> ›</div>`
+    : k === 'list' ? `<ul>${rest.map((x) => `<li>${x}</li>`).join('')}</ul>`
+    : k === 'code' ? `<pre>${rest[0]}</pre>`
+    : `<div class="${k}">${rest[0]}</div>`).join('') + '</div>'
+  $('#convs').appendChild(cv)
+})
+// The terminals
+TERMS.forEach((t) => {
+  const w = h('div', 'term'); w.id = 'term-' + t.id
+  w.style.left = t.x + 'px'; w.style.top = t.y + 'px'
+  w.innerHTML = `<div class="tb"><span class="tt">${t.title}</span><span class="lights"><i></i><i></i><i></i></span></div>
+    <div class="body"><div class="scr">${t.body}</div></div>
+    <div class="act"><div class="t2">${t.title}</div><div class="l2"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i></div></div>`
+  $('#space2').appendChild(w)
+})
+// The Dock
+DOCK.forEach(([bg, glyph, run]) => {
+  if (bg === 'sep') { $('#dock').appendChild(h('span', 'sep')); return }
+  const [a, b] = bg.split(',')
+  const i = h('i', run ? 'run' : '', `<b>${glyph}</b>`); i.style.background = `linear-gradient(${a}, ${b})`
+  $('#dock').appendChild(i)
+})
+// The board's cards
+SESSIONS.forEach((s, i) => {
+  const c = h('div', 'card'); c.id = s.id
+  const lines = LINES[s.id].map(([k, g, text, color, weight]) =>
+    `<div class="ln" id="${s.id}-${k}" style="height:0;color:${color};${weight ? 'font-weight:' + weight : ''}"><span class="g${g === 'play' ? ' play' : ''}">${g === 'play' ? '▶' : g}</span><span class="t">${text}</span></div>`).join('')
+  c.innerHTML = `<div class="tint" style="background:${s.colour}"></div><div class="in">
+    <div class="r1"><span class="sq" style="background:${s.colour}">0${i + 1}</span><span class="chip">${s.chip}</span>${s.id === 'c3' ? '<span class="chip side" id="sideChip" style="opacity:0">SIDE TASK</span>' : ''}
+      <span class="st" style="color:${s.st[0] === 'WORKING' ? 'var(--green)' : 'var(--muted)'}"><span class="sw">${s.st[0]}</span> <span class="tm">· ${s.st[1]}</span></span></div>
+    <div class="nm" style="color:${s.st[0] === 'IDLE' ? '#D5D6D9' : 'var(--text)'}"><span class="p">${s.pre}</span>${s.name}</div>
+    <div class="lines">${lines}</div></div>`
+  $('#cards').appendChild(c)
+})
+$('#stripSq').style.background = COL.Blue
+SWATCHES.forEach((c) => { const i = h('i'); i.style.background = c; $('#grid').appendChild(i) })
+for (let k = 1; k <= 10; k++) { const i = h('i'); i.style.height = (8 + k * 1.2) + 'px'; i.id = 'vb' + k; $('#vbars').appendChild(i) }
+CHIPS.forEach((c, i) => { const e = h('span', '', c); e.id = 'ch' + i; if (c.startsWith('+')) e.style.cssText = 'background:none;border:1px dashed #45464B'; $('#chips').appendChild(e) })
+
+// ---------- The timeline engine ----------
+const EASE = {
+  lin: (x) => x, out: (x) => 1 - Math.pow(1 - x, 3), in: (x) => x * x * x,
+  inOut: (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2),
+  back: (x) => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2) },
+}
+const TW = [], FX = []
+function els(t) { return typeof t === 'string' ? [...document.querySelectorAll(t)] : Array.isArray(t) ? t : [t] }
+function tw(target, t0, dur, props, e = 'out') {
+  for (const el of els(target)) for (const k in props) TW.push({ el, k, t0, t1: t0 + dur, from: props[k][0], to: props[k][1], e })
+}
+const rgb = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16))
+function mix(a, b, p) {
+  if (a && typeof a === 'object' && 'f' in a) return { f: a.f + (b.f - a.f) * p }
+  if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * p
+  if (typeof a === 'string' && a[0] === '#' && typeof b === 'string' && b[0] === '#') {
+    const x = rgb(a), y = rgb(b); return 'rgb(' + x.map((v, i) => Math.round(v + (y[i] - v) * p)).join(',') + ')'
+  }
+  return p < 1 ? a : b
+}
+let groups = null, groupsLen = 0
+function finalize() {
+  groupsLen = TW.length
+  const m = new Map()
+  for (const w of TW) { if (!m.has(w.el)) m.set(w.el, {}); const g = m.get(w.el); (g[w.k] ||= []).push(w) }
+  for (const g of m.values()) for (const k in g) g[k].sort((a, b) => a.t0 - b.t0)
+  groups = m
+}
+function valueAt(list, t) {
+  let v = list[0].from
+  for (const w of list) {
+    if (t < w.t0) break
+    if (t >= w.t1) { v = w.to; continue }
+    v = mix(w.from, w.to, EASE[w.e]((t - w.t0) / (w.t1 - w.t0))); break
+  }
+  return v
+}
+function apply(t, opts = {}) {
+  if (!groups || groupsLen !== TW.length) finalize()
+  for (const [el, g] of groups) {
+    const v = {}
+    for (const k in g) v[k] = valueAt(g[k], t)
+    if ('o' in v) el.style.opacity = v.o
+    if ('x' in v || 'y' in v || 's' in v) el.style.transform = `translate(${v.x ?? 0}px,${v.y ?? 0}px) scale(${v.s ?? 1})`
+    if ('h' in v) {
+      if (typeof v.h === 'object') { el.style.height = ''; const full = el.scrollHeight; el.style.height = (full * v.h.f) + 'px' }
+      else el.style.height = v.h + 'px'
+    }
+    if ('w' in v) el.style.width = v.w + 'px'
+    if ('mr' in v) el.style.marginRight = v.mr + 'px'
+    if ('flex' in v) el.style.flexGrow = v.flex
+    if ('bg' in v) el.style.background = v.bg
+    if ('c' in v) el.style.color = v.c
+    if ('text' in v) el.textContent = v.text
+    if ('count' in v) el.textContent = (el.dataset.pre || '') + Math.round(v.count) + (el.dataset.post || '')
+    if ('blur' in v) el.style.filter = v.blur ? `blur(${v.blur}px)` : ''
+  }
+  for (const f of FX) f(t)
+  if (opts.noCam) $('#cam').style.transform = 'none'
+}
+const show = (sel, t, d = 0.22) => tw(sel, t, d, { h: [{ f: 0 }, { f: 1 }], o: [0, 1] }, 'out')
+const hide = (sel, t, d = 0.18) => tw(sel, t, d, { h: [{ f: 1 }, { f: 0 }], o: [1, 0] }, 'inOut')
+function rectAt(sel, t) { apply(t, { noCam: true }); const r = $(sel).getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 } }
+
+// ---------- The cut ----------
+const AUDIO = []
+const sound = (t, name, gain = 1) => AUDIO.push([t, name, gain])
+const SWIPE = 12.95, COLLAPSE = 20.05
+
+// Starting state: Space 2 waits to the right, lines folded
+tw('#space2', 0, 0, { x: [1960, 1960] })
+tw('#ripple', 0, 0, { o: [0, 0] })
+for (const s of SESSIONS) for (const [k] of LINES[s.id]) tw(`#${s.id}-${k}`, 0, 0, { h: [{ f: 0 }, { f: 0 }], o: [0, 0] })
+tw('#strip', 0, 0, { h: [{ f: 0 }, { f: 0 }] })
+tw('#hbar', 0, 0, { h: [{ f: 1 }, { f: 1 }] })
+tw('#lgA', 0, 0, { w: [0, 0], o: [0, 0], mr: [0, 0] })
+tw('#segA', 0, 0, { flex: [0, 0], mr: [0, 0] }); tw('#segW', 0, 0, { flex: [0, 0], mr: [0, 0] }); tw('#segI', 0, 0, { flex: [0, 0] })
+tw('#paneT', 0, 0, { x: [380, 380], o: [0, 0], h: [{ f: 0 }, { f: 0 }] }); tw('#paneS', 0, 0, { h: [{ f: 1 }, { f: 1 }] })
+const initial = { c1: ['run', 'done'], c2: ['run'], c3: ['run', 'next'], c4: ['wf'], c5: ['done', 'next'] }
+for (const id in initial) for (const k of initial[id]) tw(`#${id}-${k}`, 0, 0, { h: [{ f: 1 }, { f: 1 }], o: [1, 1] })
+$('#c4-wf .t').dataset.pre = 'A workflow, '; $('#c4-wf .t').dataset.post = ' agents still running · 2m'
+tw('#c4-wf .t', 0, 0, { count: [20, 20] })
+tw('#it-c1 .bgsel', 0, 0, { o: [1, 1] }); tw('#cv-c1', 0, 0, { o: [1, 1] }); tw('#ctitle', 0, 0, { text: ['Acme Payments API', 'Acme Payments API'] })
+tw('#typed', 0, 0, { text: ['', ''] })
+tw('#appName', 0, 0, { text: ['Claude', 'Claude'] })
+
+// Captions: a pill, in fast and out fast. cx centres it over the free part of the frame when the
+// camera is pushed in on the board (the board then sits on the right, against the screen's edge).
+function cap(t0, t1, html, cx = 960) {
+  const c = h('div', 'cap', `<span>${html}</span>`); $('#caps').appendChild(c)
+  c.style.left = (cx - 960) + 'px'; c.style.right = (960 - cx) + 'px'
+  tw(c, t0, 0.2, { o: [0, 1], y: [16, 0] }); tw(c, t1 - 0.13, 0.13, { o: [1, 0], y: [0, -8] }, 'in')
+}
+
+// 0.0  A Mac with Claude Desktop open; ⌃⌥S brings the board in on the right
+tw('#screen', 0, 0.4, { o: [0, 1] })
+cap(0.1, 1.45, '5 Claude Code sessions running.')
+tw('#keycap', 1.0, 0.16, { o: [0, 1], y: [16, 0] }, 'back'); tw('#keycap', 1.55, 0.15, { o: [1, 0] }, 'in')
+tw('#keycap span', 1.12, 0.07, { s: [1, 0.92] }); tw('#keycap span', 1.19, 0.1, { s: [0.92, 1] })
+sound(1.12, 'click_002', 1)
+tw('#boardWrap', 0, 0, { o: [0, 0] })
+tw('#boardWrap', 1.15, 0.36, { o: [0, 1], x: [70, 0] })
+SESSIONS.forEach((s, i) => tw('#' + s.id, 1.28 + i * 0.05, 0.26, { o: [0, 1], y: [16, 0] }))
+tw('#segW', 1.4, 0.45, { flex: [0, 3], mr: [0, 2] }); tw('#segI', 1.4, 0.45, { flex: [0, 2] })
+cap(1.5, 2.3, 'One board. Every session.')
+
+// 2.35  Switching chats in Claude Desktop: the one you're in lights up
+cap(2.35, 5.0, 'The chat you’re in <em style="color:#7FB6FF">lights up</em>.')
+const FOCUS = [[1.62, 'c1']]   // the chat open when the board comes in
+tw('#cursor', 2.15, 0.2, { o: [0, 1] })
+let cur = { x: 900, y: 760 }
+function moveCursor(t0, dur, p) { tw('#cursor', t0, dur, { x: [cur.x, p.x], y: [cur.y, p.y] }, 'inOut'); cur = p }
+function click(t, p, quiet = false) {
+  tw('#cursor', t, 0.06, { s: [1, 0.82] }, 'out'); tw('#cursor', t + 0.06, 0.11, { s: [0.82, 1] }, 'out')
+  tw('#ripple', t, 0, { x: [p.x, p.x], y: [p.y, p.y] }); tw('#ripple', t, 0.32, { s: [0.3, 1.2], o: [0.9, 0] }, 'out')
+  if (!quiet) sound(t, 'click_002', 0.9)
+}
+const clickOn = (sel, t, at, move = 0.24, quiet = false) => {
+  const r = rectAt(sel, at); const p = { x: r.cx + 3, y: r.cy + 3 }
+  moveCursor(t - move - 0.04, move, p); click(t, p, quiet)
+}
+let selected = 'c1'
+function selectChat(t, id) {
+  tw(`#it-${selected} .bgsel`, t, 0.1, { o: [1, 0] }); tw(`#it-${id} .bgsel`, t, 0.1, { o: [0, 1] })
+  tw(`#cv-${selected}`, t, 0.1, { o: [1, 0], y: [0, -6] }); tw(`#cv-${id}`, t + 0.04, 0.14, { o: [0, 1], y: [8, 0] })
+  const s = SESSIONS.find((x) => x.id === id)
+  tw('#ctitle', t + 0.04, 0, { text: ['', s.pre + s.name] })
+  FOCUS.push([t, id]); selected = id
+}
+;['c2', 'c5', 'c1', 'c3'].forEach((id, i) => {
+  const t = 2.62 + i * 0.58
+  const r = rectAt('#it-' + id, 1.0)
+  const p = { x: r.x + r.w * 0.35, y: r.cy }
+  moveCursor(t - 0.26, 0.24, p); click(t, p); selectChat(t + 0.02, id)
+})
+
+// The ring and tint follow FOCUS, in the card's current colour
+FX.push((t) => {
+  const ring = $('#ring')
+  const past = FOCUS.filter(([ft]) => ft <= t)
+  for (const s of SESSIONS) $(`#${s.id} .tint`).style.opacity = 0
+  if (past.length === 0 || t >= COLLAPSE) { ring.style.opacity = 0; return }
+  const [ft, id] = past[past.length - 1]
+  const prev = past.length > 1 ? past[past.length - 2][1] : null
+  const e = EASE.out(Math.min(1, (t - ft) / 0.22))
+  const a = $('#' + id), b = prev ? $('#' + prev) : a
+  ring.style.top = (b.offsetTop + (a.offsetTop - b.offsetTop) * e) + 'px'
+  ring.style.height = (b.offsetHeight + (a.offsetHeight - b.offsetHeight) * e) + 'px'
+  ring.style.borderColor = getComputedStyle($(`#${id} .tint`)).backgroundColor
+  ring.style.opacity = prev ? 1 : e
+  $(`#${id} .tint`).style.opacity = 0.12 * e
+  if (prev && prev !== id) $(`#${prev} .tint`).style.opacity = 0.12 * (1 - e)
+})
+
+// 5.0  Needs you (the camera pushes in on the board; captions move over the free side)
+const ZOOM_CX = 600
+cap(5.05, 6.65, 'It knows when one <em style="color:#F0BE62">needs you</em>.', ZOOM_CX)
+const NEED = 5.5
+tw('#c1 .st', NEED, 0.12, { c: ['#4CC38A', '#F0BE62'] }); tw('#c1 .sw', NEED, 0, { text: ['WORKING', 'NEEDS YOU'] }); tw('#c1 .tm', NEED, 0, { text: ['· 4m', '· now'] })
+hide('#c1-run', NEED); show('#c1-ask', NEED + 0.04, 0.24)
+tw('#strip', NEED, 0.26, { h: [{ f: 0 }, { f: 1 }] })
+tw('#segA', NEED, 0.3, { flex: [0, 1], mr: [0, 2] }); tw('#segW', NEED, 0.3, { flex: [3, 2] })
+tw('#lgA', NEED, 0.25, { w: [0, 92], o: [0, 1], mr: [0, 12] }); tw('#nW', NEED, 0, { text: ['3', '2'] })
+tw('#c1 .r1 .sq', NEED, 0.09, { s: [1, 1.3] }); tw('#c1 .r1 .sq', NEED + 0.09, 0.14, { s: [1.3, 1] })
+sound(NEED + 0.02, 'needs-you', 1)
+
+// 6.7  Doing and done
+cap(6.7, 8.05, 'What it’s <em style="color:#4CC38A">doing</em>. What it just did.', ZOOM_CX)
+show('#c2-done', 6.98)
+tw('#c2-run .t', 7.4, 0.07, { o: [1, 0.15] }); tw('#c2-run .t', 7.47, 0, { text: ['Building the release', 'Uploading to TestFlight'] }); tw('#c2-run .t', 7.47, 0.13, { o: [0.15, 1] })
+tw('#c2-run .play', 6.82, 0.18, { s: [1, 1.6] }); tw('#c2-run .play', 7.0, 0.18, { s: [1.6, 1] })
+
+// 8.1  Side task, in violet
+cap(8.1, 9.6, 'Side tasks show in <em style="color:#C4B5FD">violet</em>.', ZOOM_CX)
+tw('#sideChip', 8.36, 0.28, { o: [0, 1], s: [0.4, 1] }, 'back')
+show('#c3-side', 8.48)
+hide('#c3-run', 8.72); show('#c3-paused', 8.74)
+
+// 9.65  A workflow of 20 agents is one line
+cap(9.65, 11.35, '20 agents? <em style="color:#DADADF">One line.</em>', ZOOM_CX)
+tw('#c4-wf .t', 9.92, 1.0, { count: [20, 0] }, 'in')
+hide('#c4-wf', 10.95); show('#c4-pass', 10.97)
+sound(10.99, 'done', 0.9)
+
+// 11.4  Your turn
+cap(11.4, 12.65, 'Then it’s <em style="color:#F0BE62">your turn</em>.', ZOOM_CX)
+show('#c5-you', 11.72)
+tw('#c5 .tm', 11.72, 0, { text: ['· 9m', '· now'] })
+sound(11.74, 'your-turn', 1)
+
+// 12.75  Swipe to a Space with four terminals: click each one, the board follows
+cap(12.75, 15.85, 'Four terminals? <em style="color:#7FB6FF">Click one. The board follows.</em>')
+tw('#space1', SWIPE, 0.45, { x: [0, -1960] }, 'inOut'); tw('#space2', SWIPE, 0.45, { x: [1960, 0] }, 'inOut')
+tw('#appName', SWIPE + 0.22, 0, { text: ['Claude', 'Terminal'] })
+// The Landing Page terminal is in front, the session that was open in Desktop
+let activeTerm = 'c3'
+tw('#term-c3 .act', 0, 0, { o: [1, 1] })
+;['c2', 'c4', 'c1', 'c3', 'c4'].forEach((id, i) => {
+  const t = 13.62 + i * 0.47
+  const r = rectAt('#term-' + id, 13.5)
+  const p = { x: r.x + r.w * (0.42 + (i % 2) * 0.12), y: r.y + r.h * (0.5 + (i % 3) * 0.08) }
+  moveCursor(t - 0.24, 0.22, p); click(t, p)
+  if (activeTerm) tw(`#term-${activeTerm} .act`, t, 0.08, { o: [1, 0] })
+  tw(`#term-${id} .act`, t, 0.08, { o: [0, 1] })
+  FOCUS.push([t + 0.02, id]); activeTerm = id
+})
+{
+  const said = 'which test was flaky?'
+  for (let i = 0; i < said.length; i++) tw('#typed', 15.62 + i * 0.012, 0, { text: [said.slice(0, i), said.slice(0, i + 1)] })
+}
+
+// 15.95  Colour: pick one for the session you're in (the last terminal clicked)
+cap(15.95, 17.75, 'Give every session a <em style="color:#FF8A65">colour</em>.', 640)
+FX.push((t) => {
+  if (t < 16.2 || t > 17.5) return
+  const sq = $('#c4 .sq'), b = $('#board').getBoundingClientRect(), r = sq.getBoundingClientRect(), s = b.width / 360
+  $('#pop').style.left = ((r.left - b.left) / s - 6) + 'px'; $('#pop').style.top = ((r.bottom - b.top) / s + 8) + 'px'
+})
+FX.push(() => { const g = $('#grid i:nth-child(12)'); $('#popSel').style.left = (g.offsetLeft - 3) + 'px'; $('#popSel').style.top = (g.offsetTop - 3) + 'px' })
+const PICK = 17.05
+tw('#pop', 16.52, 0.18, { o: [0, 1], s: [0.92, 1] }); tw('#pop', PICK + 0.12, 0.13, { o: [1, 0], s: [1, 0.96] }, 'in')
+;[...document.querySelectorAll('#grid i')].forEach((sw, i) => tw(sw, 16.54 + i * 0.005, 0.16, { s: [0.5, 1], o: [0, 1] }))
+tw('#popSel', PICK, 0.1, { o: [0, 1] })
+tw('#c4 .sq', PICK + 0.02, 0.2, { bg: ['#E05BE0', '#FF8A65'] }); tw('#c4 .tint', PICK + 0.02, 0.2, { bg: ['#E05BE0', '#FF8A65'] })
+{
+  const sq = rectAt('#c4 .sq', 16.4)
+  const p1 = { x: sq.cx + 5, y: sq.cy + 4 }
+  moveCursor(16.15, 0.26, p1); click(16.46, p1)
+  const sw = rectAt('#grid i:nth-child(12)', 16.85)
+  const p2 = { x: sw.cx + 4, y: sw.cy + 4 }
+  moveCursor(16.68, 0.3, p2); click(PICK, p2)
+}
+clickOn('#hdrS .ctl > svg', 17.86, 17.5, 0.38)
+
+// 17.85  Sounds and volume
+cap(17.85, 19.95, '28 sounds. <em style="color:#DADADF">Alert volume.</em>', 680)
+tw('#paneS', 17.9, 0.28, { x: [0, -380], h: [{ f: 1 }, { f: 0 }] }, 'inOut'); tw('#paneT', 17.9, 0.28, { x: [380, 0], o: [1, 1], h: [{ f: 0 }, { f: 1 }] }, 'inOut')
+tw('#hdrS', 17.9, 0.16, { o: [1, 0] }); tw('#hdrT', 17.98, 0.16, { o: [0, 1] })
+tw('#hbar', 17.9, 0.24, { o: [1, 0], h: [{ f: 1 }, { f: 0 }] }, 'inOut'); tw('#strip', 17.9, 0.24, { o: [1, 0], h: [{ f: 1 }, { f: 0 }] }, 'inOut')
+const FLICK = [[1, 18.2, 'Mallet'], [4, 18.45, 'Glass'], [6, 18.7, 'Hero'], [8, 18.95, 'Purr']]
+FLICK.forEach(([i, t, name], n) => {
+  const prev = n > 0 ? FLICK[n - 1][0] : null
+  tw('#ch' + i, t, 0.09, { bg: ['#22232A', '#F2F2F3'], c: ['#B4B5B9', '#131416'] })
+  if (prev !== null) tw('#ch' + prev, t, 0.09, { bg: ['#F2F2F3', '#22232A'], c: ['#131416', '#B4B5B9'] })
+  tw('#sndName', t, 0, { text: [n > 0 ? FLICK[n - 1][2] : 'Mallet', name] })
+  sound(t, 'tick_002', 0.9)
+  clickOn('#ch' + i, t, 18.35, 0.15, true)
+})
+clickOn('#vb5', 19.12, 18.9, 0.14, true)
+tw('#vMine', 0, 0, { bg: ['#F2F2F3', '#F2F2F3'], c: ['#131416', '#131416'] })
+tw('#vMine', 19.12, 0.07, { bg: ['#F2F2F3', '#22232A'], c: ['#131416', '#B4B5B9'] })
+for (let k = 1; k <= 5; k++) tw('#vb' + k, 19.12 + k * 0.045, 0.07, { bg: ['#22232A', '#F2F2F3'] })
+tw('#volPct', 19.2, 0, { text: ['Mine', '50%'] })
+
+// 19.65  Collapse: the needs-you line stays
+clickOn('#hdrT > span', 19.6, 19.4, 0.22)
+cap(20.0, 21.1, 'Collapsed, it still says <em style="color:#F0BE62">who needs you</em>.', 650)
+tw('#paneS', 19.62, 0.24, { x: [-380, 0], h: [{ f: 0 }, { f: 1 }] }, 'inOut'); tw('#paneT', 19.62, 0.24, { x: [0, 380], h: [{ f: 1 }, { f: 0 }] }, 'inOut')
+tw('#hdrT', 19.62, 0.14, { o: [1, 0] }); tw('#hdrS', 19.7, 0.14, { o: [0, 1] })
+tw('#hbar', 19.65, 0.22, { o: [0, 1], h: [{ f: 0 }, { f: 1 }] }, 'inOut'); tw('#strip', 19.65, 0.22, { o: [0, 1], h: [{ f: 0 }, { f: 1 }] }, 'inOut')
+tw('#paneT', 19.88, 0, { o: [1, 0] })
+SESSIONS.forEach((s, i) => tw('#' + s.id, COLLAPSE + i * 0.03, 0.2, { o: [1, 0] }, 'inOut'))
+tw('#body', COLLAPSE, 0.32, { h: [{ f: 1 }, { f: 0 }] }, 'inOut')
+{
+  // Collapsed, the board is its header and the needs-you strip, nothing under them
+  const small = rectAt('#head', 6.2).h + rectAt('#strip', 6.2).h + 4
+  tw('#board', 0, 0, { h: [750, 750] }); tw('#board', COLLAPSE, 0.32, { h: [750, small] }, 'inOut')
+}
+clickOn('#hdrS .ctl > svg:last-child', COLLAPSE - 0.04, 19.95, 0.2)
+tw('#cursor', 20.55, 0.2, { o: [1, 0] })
+
+// 21.15  End card
+tw('#end', 21.15, 0.4, { o: [0, 1] })
+tw('#end img', 21.25, 0.45, { s: [0.7, 1], o: [0, 1] }, 'back'); tw('#end .w', 21.35, 0.36, { y: [24, 0], o: [0, 1] })
+tw('#end .s', 21.49, 0.36, { y: [18, 0], o: [0, 1] }); tw('#end .f', 21.63, 0.36, { y: [14, 0], o: [0, 1] }); tw('#end .u', 21.77, 0.36, { o: [0, 1] })
+tw('#cam', 21.15, 0.55, { blur: [0, 8] })
+sound(21.3, 'done', 0.7)
+
+// ---------- The camera: wide for the desktop, pushed in for each beat ----------
+const camState = { x: 0, y: 0, s: 1 }
+function camTo(t0, dur, fx, fy, s) {
+  const clamp = (v, lo) => Math.min(0, Math.max(lo, v))
+  const to = { x: clamp(960 - fx * s, 1920 - 1920 * s), y: clamp(560 - fy * s, 1080 - 1080 * s), s }
+  tw('#cam', t0, dur, { x: [camState.x, to.x], y: [camState.y, to.y], s: [camState.s, to.s] }, 'inOut')
+  Object.assign(camState, to)
+}
+tw('#cam', 0, 0, { x: [0, 0], y: [0, 0], s: [1, 1] })
+const focusCard = (id, t, s) => { const r = rectAt('#' + id, t); return [r.cx, r.cy, s] }
+camTo(4.85, 0.42, ...focusCard('c1', 5.9, 1.9))
+camTo(6.6, 0.38, ...focusCard('c2', 7.2, 1.9))
+camTo(8.0, 0.38, ...focusCard('c3', 8.9, 1.9))
+camTo(9.55, 0.38, ...focusCard('c4', 10.6, 1.9))
+camTo(11.3, 0.38, ...focusCard('c5', 11.9, 1.9))
+camTo(12.62, 0.42, 960, 560, 1.0)
+{ const r = rectAt('#c4', 16.8); camTo(15.9, 0.42, r.cx - 10, r.cy + 60, 1.7) }
+{ const r = rectAt('#board', 18.5); camTo(17.45, 0.42, r.cx - 40, r.y + r.h * 0.42, 1.45) }
+{ const r = rectAt('#board', 20.6); camTo(19.95, 0.45, r.cx - 30, r.y + 70, 1.6) }
+
+window.apply = apply
+window.DURATION = 24.0
+window.AUDIO = AUDIO.sort((a, b) => a[0] - b[0])
+finalize()
+const q = new URLSearchParams(location.search)
+if (q.has('play')) { const t0 = performance.now(); const tick = () => { apply(((performance.now() - t0) / 1000) % window.DURATION); requestAnimationFrame(tick) }; tick() }
+else apply(Number(q.get('t') || 0))
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Built by board/build.sh when run by hand
+board/Session Board.app/
+board/*.app.tmp/
+# Written by Claude Code for your build
+.claude-plugin/types/
+.DS_Store
+board/*.app.lock/
+docs/launch/out/
+# Internal design notes, kept out of the public repo
+docs/design/BRAND-SPEC.md

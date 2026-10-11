@@ -1,0 +1,13 @@
+{
+  "name": "session-board",
+  "owner": {
+    "name": "Kiran Pothana"
+  },
+  "description": "Session Board: a floating Mac window listing every Claude Code session with its active and pending tasks.",
+  "plugins": [
+    {
+      "name": "session-board",
+      "source": "./"
+    }
+  ]
+}

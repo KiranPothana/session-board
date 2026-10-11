@@ -1,0 +1,8 @@
+{
+  "modules": ["./register.js"],
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-title.mjs\"", "timeout": 10 }] }
+    ]
+  }
+}
