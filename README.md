@@ -1,5 +1,7 @@
 # Session Board
 
+**[sessionboard.dev](https://sessionboard.dev)**
+
 One floating window on your Mac that lists every Claude Code session you have running (in the terminal, over Remote Control, and in Claude Desktop) with what each one is working on, what is still to do, and which ones need you.
 
 It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) plus a small native macOS app that the plugin builds on your Mac the first time you use it.
