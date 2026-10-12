@@ -2,7 +2,7 @@
 
 **[sessionboard.dev](https://sessionboard.dev)**
 
-**Every Claude Code chat on your Mac, in one window.**
+**A Claude Code mod: every Claude Code session on your Mac, in one window.**
 ✓ what it did · ▶ what it's doing · ○ what's next · what's waiting on you.
 
 <details><summary><b>Copy for AI</b>: paste this into Claude and it explains Session Board and installs it for you</summary>
@@ -38,7 +38,7 @@ claude plugin install session-board@session-board
 ```
 Then I start a new Claude Code session, or type /session-board in one. The first time, it builds the window app on my Mac (under a minute) and opens it. Chats already running show up too.
 
-Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my Mac and talks to no server.
+Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my Mac. Bug reports are sent only when I say "report" (or click Report), and never include anything from my chats.
 
 Update: `claude plugin update session-board@session-board`. Uninstall: `claude plugin uninstall session-board@session-board`, then quit it from the menu bar.
 
@@ -127,7 +127,17 @@ That's a few small calls per turn, per session, billed to your Claude account li
 
 **Everything else stays on your Mac.**
 - The window reads files Claude Code already writes: the session registry in `~/.claude/sessions` and the plugin's store.
-- It talks to no server.
+- It talks to no server on its own.
+
+**Reports, only when you choose to send one.** Nothing is sent until you say **report** in a chat or click Report
+(a crash) or a Feedback button in the window:
+- **What's sent:** your description, the versions of Session Board, Claude Code, macOS and Swift, the window's
+  settings, how many sessions are on the board, Session Board's recent error messages, and the top of the stack of a
+  crash. Your home folder and user name are removed. Nothing from your chats is sent: no session names, summaries,
+  requests or project names.
+- **Where it goes:** with the GitHub CLI signed in, a public issue on this repo, under your GitHub account. Without
+  it, Session Board's report inbox (a Cloudflare Worker, `reports-worker/`), which files it as an issue in a private
+  repo only the team reads. The Feedback buttons open GitHub in your browser for you to send.
 
 ## How it works
 

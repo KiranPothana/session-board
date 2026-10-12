@@ -18,7 +18,7 @@ else in the same reply.
 - End that same reply with one short question. Don't use a question tool, which would stop their work.
   - Bug:
     > Want me to report this to the Session Board team? I'd send **"Shortcut stops working after the Mac sleeps"**, plus
-    > versions and settings, and nothing from your chats. It goes on GitHub, in public. Say **report** to send it.
+    > versions and settings, and nothing from your chats. It may be posted publicly on GitHub. Say **report** to send it.
   - Wish: the same, with "send this idea".
 - Write the title in under 70 characters, in plain words.
 - Ask once for each problem. If they say no, or ignore the question, drop it and don't ask again this session.
@@ -51,11 +51,12 @@ EOF
 - Use `--kind idea` for a wish.
 - The script adds what the team needs to look into it: versions, the window's settings, error messages and crashes.
   It removes the home folder and the user name.
-- With the GitHub CLI signed in, it opens the issue at once and prints `Reported: <link>`. Otherwise it opens GitHub
-  in the browser with the report filled in.
+- With the GitHub CLI signed in, it opens a public issue at once and prints `Reported: <link>`. Otherwise it sends it
+  privately to the team's inbox, which needs no account. Only if that fails does it open GitHub in the browser, filled in.
 
 Then tell them in one line:
 - "Reported: <link>. You'll get GitHub notifications when it's answered."
+- Or, from the inbox: "Sent to the Session Board team (report #12). Thanks."
 - Or, from the browser: "It's open in your browser, filled in. Press Create to send it."
 
 If the script fails, give them https://github.com/KiranPothana/session-board/issues/new instead.

@@ -12,8 +12,9 @@
 // summaries, requests or project names. The home folder and user name are taken out of
 // everything it sends.
 //
-// With the GitHub CLI signed in, it opens the issue at once and prints its link. Otherwise it
-// opens GitHub's new-issue page in the browser with the report filled in, to submit there.
+// With the GitHub CLI signed in, it opens a public issue at once and prints its link. Otherwise
+// it sends the report to Session Board's inbox (reports-worker/), which files it privately for
+// the team; only if that fails does it open GitHub's new-issue page in the browser, filled in.
 // --dry-run prints the report and sends nothing.
 
 import { execFileSync } from 'node:child_process'
@@ -23,6 +24,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPO = process.env.SESSION_BOARD_REPO || 'KiranPothana/session-board'
+const INBOX = process.env.SESSION_BOARD_INBOX || 'https://session-board-reports.kiran-987.workers.dev/report'
 const HOME = homedir()
 const DATA = join(HOME, 'Library/Application Support/session-board')
 const APP = join(HOME, 'Applications/Session Board.app')
@@ -167,7 +169,7 @@ if (dryRun) {
 }
 
 // ---- Send: the GitHub CLI when it's signed in, otherwise the browser
-if (run('gh', ['auth', 'token', '--hostname', 'github.com'], 10000) !== '') {
+if (signedIn()) {
   const file = join(mkdtempSync(join(tmpdir(), 'sb-report-')), 'body.md')
   writeFileSync(file, body)
   try {
@@ -182,6 +184,23 @@ if (run('gh', ['auth', 'token', '--hostname', 'github.com'], 10000) !== '') {
     console.error('gh could not open the issue (' + oneLine(err.stderr || err.message) + '); opening the browser instead')
   }
 }
+// No GitHub CLI: the inbox, which needs no account
+try {
+  const res = await fetch(INBOX, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ kind, source: 'chat', title: clean(title).slice(0, 120), body: body.slice(0, 20000) }),
+    signal: AbortSignal.timeout(15000),
+  })
+  const answer = await res.json().catch(() => ({}))
+  if (res.ok && answer.ok) {
+    console.log(`Reported privately to the Session Board team (report #${answer.ref}).`)
+    process.exit(0)
+  }
+  console.error('the inbox said: ' + (answer.error ?? res.status) + '; opening the browser instead')
+} catch (err) {
+  console.error('the inbox could not be reached (' + err.message + '); opening the browser instead')
+}
 let shortBody = body
 if (shortBody.length > URL_BODY_CHARS) shortBody = shortBody.slice(0, URL_BODY_CHARS) + '\n…(cut to fit)\n</details>'
 const url = `https://github.com/${REPO}/issues/new?` + new URLSearchParams({ title: fullTitle, body: shortBody })
@@ -190,4 +209,14 @@ console.log('Opened GitHub in the browser with the report filled in: press "Crea
 
 function oneLine(s) {
   return String(s ?? '').split('\n').map((x) => x.trim()).filter(Boolean).pop() ?? ''
+}
+
+// Whether the GitHub CLI is signed in: its status check exits 0 then. (The token is never read.)
+function signedIn() {
+  try {
+    execFileSync('gh', ['auth', 'status', '--hostname', 'github.com'], { timeout: 10000, stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
 }

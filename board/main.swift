@@ -730,6 +730,9 @@ func loadRows(now: Double) -> [Row] {
 
 final class Board: ObservableObject {
     @Published var rows: [Row] = []
+    // A crash since the last one offered, and whether the prompt has sent it
+    @Published var crash: CrashReport?
+    @Published var crashSent = false
     // Collapsed to one line of counts; kept between launches
     @Published var collapsed = UserDefaults.standard.bool(forKey: "collapsed") {
         didSet { UserDefaults.standard.set(collapsed, forKey: "collapsed") }
@@ -1915,6 +1918,55 @@ struct NeedsYouStrip: View {
 }
 
 // The one switch the Desktop highlight needs, named
+// "Session Board quit unexpectedly": one click sends the crash to the team
+struct CrashNote: View {
+    @ObservedObject var board: Board
+    let p: Palette
+    @State private var sending = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle().fill(board.crashSent ? p.doing : p.amber).frame(width: 6, height: 6)
+                Text(board.crashSent ? "Sent. Thanks for the report." : "Session Board quit unexpectedly")
+                    .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(p.text)
+                Spacer(minLength: 4)
+            }
+            if !board.crashSent {
+                Text("Send the crash details to the Session Board team? Nothing from your sessions is included.")
+                    .font(.system(size: 11.5)).foregroundStyle(p.muted).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    QuietButton(title: sending ? "Sending…" : "Report", p: p) { report() }.disabled(sending)
+                    QuietButton(title: "Not now", p: p) { close() }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(p.cell)
+    }
+
+    func report() {
+        guard let crash = board.crash, !drawingSnapshot else { return }
+        sending = true
+        sendCrash(crash) { sent in
+            sending = false
+            if sent {
+                board.crashSent = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { close() }
+            } else {
+                close()
+            }
+        }
+    }
+
+    func close() {
+        if let crash = board.crash, !drawingSnapshot { UserDefaults.standard.set(crash.at.timeIntervalSince1970, forKey: "crashSeenAt") }
+        board.crash = nil
+        board.crashSent = false
+    }
+}
+
 struct AccessibilityNote: View {
     let p: Palette
 
@@ -2257,6 +2309,94 @@ struct SectionLabel: View {
 let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
 
 enum FeedbackKind { case bug, idea }
+
+// Session Board's report inbox (reports-worker/ in the repo): files a report privately for the
+// team, with no GitHub account needed
+let inboxURL = URL(string: "https://session-board-reports.kiran-987.workers.dev/report")!
+
+// A crash of this app that macOS wrote a report for, as the crash prompt offers to send it:
+// the exception and the top of the crashed thread, never anything from the sessions
+struct CrashReport {
+    let at: Date
+    let title: String
+    let details: String
+}
+
+// The newest crash report since the last one offered, or nil. The first run only notes the time,
+// so crashes from before the prompt existed are never offered.
+func newCrash() -> CrashReport? {
+    let key = "crashSeenAt"
+    let seen = UserDefaults.standard.double(forKey: key)
+    if seen == 0 {
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: key)
+        return nil
+    }
+    let dir = home + "/Library/Logs/DiagnosticReports"
+    let fm = FileManager.default
+    let newest = ((try? fm.contentsOfDirectory(atPath: dir)) ?? [])
+        .filter { $0.hasPrefix("SessionBoard") && $0.hasSuffix(".ips") }
+        .compactMap { name -> (String, Date)? in
+            guard let at = (try? fm.attributesOfItem(atPath: dir + "/" + name))?[.modificationDate] as? Date,
+                  at.timeIntervalSince1970 > seen else { return nil }
+            return (name, at)
+        }
+        .max { $0.1 < $1.1 }
+    guard let (name, at) = newest, let text = try? String(contentsOfFile: dir + "/" + name, encoding: .utf8) else { return nil }
+    return parseCrash(text, at: at)
+}
+
+// An .ips file is a line of JSON (the header) and then the report as JSON
+func parseCrash(_ text: String, at: Date) -> CrashReport? {
+    guard let nl = text.firstIndex(of: "\n"),
+          let body = try? JSONSerialization.jsonObject(with: Data(text[text.index(after: nl)...].utf8)) as? [String: Any] else { return nil }
+    let exception = body["exception"] as? [String: Any]
+    let type = (exception?["type"] as? String) ?? "crash"
+    let signal = (exception?["signal"] as? String) ?? ""
+    let images = (body["usedImages"] as? [[String: Any]]) ?? []
+    let thread = ((body["threads"] as? [[String: Any]]) ?? []).first { ($0["triggered"] as? Bool) == true } ?? [:]
+    let frames = ((thread["frames"] as? [[String: Any]]) ?? []).prefix(10).map { frame -> String in
+        let image = (frame["imageIndex"] as? Int).flatMap { images.indices.contains($0) ? images[$0]["name"] as? String : nil } ?? "?"
+        let line = (frame["sourceLine"] as? Int).map { " (\((frame["sourceFile"] as? String) ?? "?"):\($0))" } ?? ""
+        return "    \(image) \((frame["symbol"] as? String) ?? "?")\(line)"
+    }
+    // Swift's own message for the crash, such as "Fatal error: Index out of range"
+    let messages = ((body["asi"] as? [String: Any]) ?? [:]).values.compactMap { $0 as? [String] }.flatMap { $0 }
+    let os = ProcessInfo.processInfo.operatingSystemVersion
+    let when = ISO8601DateFormatter().string(from: at)
+    let details = """
+    ### The window app crashed
+
+    \(type) \(signal) at \(when)
+    \(messages.isEmpty ? "" : "\n" + messages.joined(separator: "\n") + "\n")
+    ```
+    \(frames.joined(separator: "\n"))
+    ```
+
+    - Session Board: \(appVersion)
+    - macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)
+    """
+    return CrashReport(at: at, title: "Window app crashed: \(type)", details: details.replacingOccurrences(of: home, with: "~"))
+}
+
+// Sends a crash to the inbox; if it can't be reached, opens GitHub with it filled in instead
+func sendCrash(_ crash: CrashReport, done: @escaping (Bool) -> Void) {
+    var request = URLRequest(url: inboxURL, timeoutInterval: 15)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.httpBody = try? JSONSerialization.data(withJSONObject: ["kind": "crash", "source": "crash", "title": crash.title, "body": crash.details])
+    URLSession.shared.dataTask(with: request) { data, response, _ in
+        let sent = (response as? HTTPURLResponse)?.statusCode == 201
+            && ((data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["ok"] as? Bool) == true
+        DispatchQueue.main.async {
+            if !sent {
+                var url = URLComponents(string: "https://github.com/KiranPothana/session-board/issues/new")!
+                url.queryItems = [URLQueryItem(name: "title", value: "Crash: " + crash.title), URLQueryItem(name: "body", value: crash.details)]
+                if let link = url.url { NSWorkspace.shared.open(link) }
+            }
+            done(sent)
+        }
+    }.resume()
+}
 
 // A new GitHub issue, opened in the browser with the versions and settings filled in (never
 // anything from the sessions), for the user to describe what happened and send
@@ -2713,6 +2853,7 @@ struct BoardView: View {
             } else if board.showSettings {
                 SettingsPage(board: board, p: p)
             } else {
+                if board.crash != nil { CrashNote(board: board, p: p) }
                 if !board.canReadDesktop && board.desktopRunning { AccessibilityNote(p: p) }
                 if board.shown.isEmpty {
                     EmptyBoard(p: p).overlay(alignment: .bottom) { toast(p) }
@@ -3060,6 +3201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         restoreVolumeLeftByAlert()
         board.start()
+        board.crash = newCrash()
         board.onAttention = { [weak self] kind, row in self?.attention(kind, row) }
         toasts.onTick = { [weak self] in self?.placeToasts() }
         NSApp.applicationIconImage = appIcon(size: 512)
@@ -3634,7 +3776,7 @@ func sampleRows() -> [Row] {
 
 // Renders the window to a PNG, to compare against the boards. Flags: --settings, --light/--dark,
 // --collapsed, --dismissed (opens that section), --undo (the toast), --empty, --viewing <n>,
-// --shortcut-clash, --no-accessibility
+// --shortcut-clash, --no-accessibility, --crash (the crash prompt)
 @MainActor func snapshot(to path: String) -> Int32 {
     drawingSnapshot = true
     let args = CommandLine.arguments
@@ -3650,6 +3792,7 @@ func sampleRows() -> [Row] {
     defer { if board.collapsed != wasCollapsed { board.collapsed = wasCollapsed } }
     board.showDismissed = args.contains("--dismissed")
     if args.contains("--empty") { board.rows = [] }
+    if args.contains("--crash") { board.crash = CrashReport(at: Date(), title: "Window app crashed: EXC_BREAKPOINT", details: "") }
     if args.contains("--sample") {
         // Their ids match no saved dismissal or removed line, so nothing saved is touched
         board.rows = sampleRows()
@@ -3707,6 +3850,7 @@ func sampleRows() -> [Row] {
         } else if board.showSettings {
             SettingsContent(board: board, p: p)
         } else {
+            if board.crash != nil { CrashNote(board: board, p: p) }
             if !board.canReadDesktop && board.desktopRunning { AccessibilityNote(p: p) }
             if board.shown.isEmpty { EmptyBoard(p: p).frame(height: 230) } else { CardsList(board: board, p: p) }
             if let last = board.undoable {
@@ -3735,6 +3879,12 @@ let args = CommandLine.arguments
 if let i = args.firstIndex(of: "--store-prefix"), i + 1 < args.count { storePrefix = args[i + 1] }
 if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     exit(MainActor.assumeIsolated { snapshot(to: args[i + 1]) })
+}
+// What the crash prompt would send for a crash report: --crash-report <file.ips>
+if let i = args.firstIndex(of: "--crash-report"), i + 1 < args.count {
+    let text = (try? String(contentsOfFile: args[i + 1], encoding: .utf8)) ?? ""
+    if let crash = parseCrash(text, at: Date()) { print(crash.title + "\n\n" + crash.details); exit(0) }
+    print("not a crash report this can read"); exit(1)
 }
 // Check a shortcut the way Settings does: --check-shortcut <keyCode> <carbon modifiers> <key label>
 if let i = args.firstIndex(of: "--check-shortcut"), i + 3 < args.count,

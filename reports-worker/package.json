@@ -1,0 +1,7 @@
+{
+  "name": "session-board-reports",
+  "private": true,
+  "type": "module",
+  "scripts": { "deploy": "wrangler deploy", "dev": "wrangler dev" },
+  "devDependencies": { "wrangler": "4.141.0" }
+}

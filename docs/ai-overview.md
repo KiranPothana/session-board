@@ -26,7 +26,7 @@ claude plugin install session-board@session-board
 ```
 Then I start a new Claude Code session, or type /session-board in one. The first time, it builds the window app on my Mac (under a minute) and opens it. Chats already running show up too.
 
-Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my Mac and talks to no server.
+Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my Mac. Bug reports are sent only when I say "report" (or click Report), and never include anything from my chats.
 
 Update: `claude plugin update session-board@session-board`. Uninstall: `claude plugin uninstall session-board@session-board`, then quit it from the menu bar.
 

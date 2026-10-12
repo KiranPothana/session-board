@@ -3,7 +3,7 @@
   "owner": {
     "name": "Kiran Pothana"
   },
-  "description": "Session Board: a floating Mac window listing every Claude Code session with its active and pending tasks.",
+  "description": "Session Board: a Claude Code mod for macOS. One floating window showing what every Claude Code session is doing.",
   "plugins": [
     {
       "name": "session-board",

@@ -25,7 +25,7 @@ h0 = body.index('<section class="a-hero"')
 h1 = body.index('</section>', h0) + len('</section>')
 hero = f"""<section class="hs" style="padding: 24px 0 88px">
 <div class="hs-head">
-<span style="font: 700 11px {MONO}; letter-spacing: 0.14em; color: {GREEN}">CLAUDE CODE · MAC · OPEN SOURCE</span>
+<span style="font: 700 11px {MONO}; letter-spacing: 0.14em; color: {GREEN}">CLAUDE CODE MOD · MAC · OPEN SOURCE</span>
 <h1 class="hs-h1">Know what every session is doing.<br><span style="color: #7C7D83">Without opening one.</span></h1>
 <p class="hs-sub">One floating window gives each Claude Code chat a live stand-up: what it just did, what it’s doing, what’s next, and what’s waiting on you.</p>
 <div style="display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap">
@@ -135,9 +135,21 @@ for (const b of document.querySelectorAll('.ai-copy')) {
 </script>
 <script src="hero.js"></script>''' 
 
-TITLE = 'Session Board · every Claude Code session at a glance'
-DESC = 'A floating Mac window that gives each Claude Code session a live one-line stand-up: what it just did, what it is doing, what is next, and what is waiting on you. Free and open source.'
+TITLE = 'Session Board · a Claude Code mod that shows what every session is doing'
+DESC = 'Session Board is a free, open-source Claude Code mod for macOS: one floating window that gives every Claude Code session a live stand-up (what it just did, what it is doing, what is next, and what is waiting on you), with popups and one-click jumps. Terminal, Remote Control and Claude Desktop.'
 URL = 'https://sessionboard.dev/'
+# Structured data, so search engines know it's a free macOS app and where its code is
+import json as _json
+LD = _json.dumps({
+    '@context': 'https://schema.org', '@type': 'SoftwareApplication', 'name': 'Session Board',
+    'alternateName': 'Session Board for Claude Code', 'description': DESC, 'url': URL,
+    'applicationCategory': 'DeveloperApplication', 'applicationSubCategory': 'Claude Code mod',
+    'operatingSystem': 'macOS 15 or later', 'license': 'https://opensource.org/licenses/MIT',
+    'isAccessibleForFree': True, 'offers': {'@type': 'Offer', 'price': '0', 'priceCurrency': 'USD'},
+    'codeRepository': GH, 'image': URL + 'hero.jpg',
+    'keywords': 'Claude Code mod, Claude Code plugin, Claude Code sessions, Claude Desktop, Remote Control, macOS',
+    'author': {'@type': 'Person', 'name': 'Kiran Pothana', 'url': 'https://github.com/KiranPothana'},
+}, ensure_ascii=False)
 head = f'''<!doctype html>
 <html lang="en">
 <head>
@@ -150,7 +162,12 @@ head = f'''<!doctype html>
 <link rel="icon" href="icon.png">
 <link rel="canonical" href="{URL}">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Session Board">
+<meta property="og:title" content="Session Board · a Claude Code mod">
+<meta property="og:site_name" content="Session Board">
+<meta name="twitter:title" content="Session Board · a Claude Code mod">
+<meta name="twitter:description" content="{DESC}">
+<meta name="twitter:image" content="{URL}hero.jpg">
+<script type="application/ld+json">{LD}</script>
 <meta property="og:description" content="{DESC}">
 <meta property="og:url" content="{URL}">
 <meta property="og:image" content="{URL}hero.jpg">
@@ -166,6 +183,8 @@ ai_block = f'<script type="text/plain" id="ai-text">{AI_TEXT}</script>'
 open(os.path.join(OUT, 'index.html'), 'w').write(head + body + ai_block + script + '\n</body>\n</html>\n')
 open(os.path.join(OUT, 'hero.js'), 'w').write(open(os.path.join(HERE, 'board-engine.js')).read() + '\n' + open(os.path.join(HERE, 'hero-page.js')).read())
 open(os.path.join(OUT, 'llms.txt'), 'w').write(AI_TEXT + '\n')
+open(os.path.join(OUT, 'robots.txt'), 'w').write(f'User-agent: *\nAllow: /\nSitemap: {URL}sitemap.xml\n')
+open(os.path.join(OUT, 'sitemap.xml'), 'w').write(f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>{URL}</loc></url>\n<url><loc>{URL}llms.txt</loc></url>\n</urlset>\n')
 
 # The README's copy, between its markers, as a code block (GitHub gives those a copy button)
 readme_path = os.path.join(ROOT, 'README.md')

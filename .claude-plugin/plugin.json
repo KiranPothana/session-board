@@ -2,19 +2,25 @@
   "name": "session-board",
   "displayName": "Session Board",
   "version": "0.1.0",
-  "description": "A floating Mac window listing every Claude Code session on your Mac (terminal, Remote Control and Claude Desktop) with what each one is working on, what is still to do, and which ones need you.",
+  "description": "A Claude Code mod for macOS: one floating window showing what every Claude Code session is doing (terminal, Remote Control and Claude Desktop), with live summaries, what's waiting on you, popups and one-click jumps.",
   "author": {
     "name": "Kiran Pothana"
   },
-  "homepage": "https://github.com/KiranPothana/session-board",
+  "homepage": "https://sessionboard.dev",
   "repository": "https://github.com/KiranPothana/session-board",
   "license": "MIT",
   "keywords": [
+    "claude-code-mod",
+    "mod",
     "sessions",
-    "tasks",
+    "summaries",
+    "dashboard",
+    "monitoring",
+    "notifications",
     "macos",
+    "menu-bar",
     "remote-control",
     "desktop",
-    "mod"
+    "productivity"
   ]
 }

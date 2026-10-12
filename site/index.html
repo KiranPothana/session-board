@@ -3,15 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Session Board · every Claude Code session at a glance</title>
-<meta name="description" content="A floating Mac window that gives each Claude Code session a live one-line stand-up: what it just did, what it is doing, what is next, and what is waiting on you. Free and open source.">
+<title>Session Board · a Claude Code mod that shows what every session is doing</title>
+<meta name="description" content="Session Board is a free, open-source Claude Code mod for macOS: one floating window that gives every Claude Code session a live stand-up (what it just did, what it is doing, what is next, and what is waiting on you), with popups and one-click jumps. Terminal, Remote Control and Claude Desktop.">
 <meta name="theme-color" content="#0B0B0C">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="icon.png">
 <link rel="canonical" href="https://sessionboard.dev/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Session Board">
-<meta property="og:description" content="A floating Mac window that gives each Claude Code session a live one-line stand-up: what it just did, what it is doing, what is next, and what is waiting on you. Free and open source.">
+<meta property="og:title" content="Session Board · a Claude Code mod">
+<meta property="og:site_name" content="Session Board">
+<meta name="twitter:title" content="Session Board · a Claude Code mod">
+<meta name="twitter:description" content="Session Board is a free, open-source Claude Code mod for macOS: one floating window that gives every Claude Code session a live stand-up (what it just did, what it is doing, what is next, and what is waiting on you), with popups and one-click jumps. Terminal, Remote Control and Claude Desktop.">
+<meta name="twitter:image" content="https://sessionboard.dev/hero.jpg">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Session Board", "alternateName": "Session Board for Claude Code", "description": "Session Board is a free, open-source Claude Code mod for macOS: one floating window that gives every Claude Code session a live stand-up (what it just did, what it is doing, what is next, and what is waiting on you), with popups and one-click jumps. Terminal, Remote Control and Claude Desktop.", "url": "https://sessionboard.dev/", "applicationCategory": "DeveloperApplication", "applicationSubCategory": "Claude Code mod", "operatingSystem": "macOS 15 or later", "license": "https://opensource.org/licenses/MIT", "isAccessibleForFree": true, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}, "codeRepository": "https://github.com/KiranPothana/session-board", "image": "https://sessionboard.dev/hero.jpg", "keywords": "Claude Code mod, Claude Code plugin, Claude Code sessions, Claude Desktop, Remote Control, macOS", "author": {"@type": "Person", "name": "Kiran Pothana", "url": "https://github.com/KiranPothana"}}</script>
+<meta property="og:description" content="Session Board is a free, open-source Claude Code mod for macOS: one floating window that gives every Claude Code session a live stand-up (what it just did, what it is doing, what is next, and what is waiting on you), with popups and one-click jumps. Terminal, Remote Control and Claude Desktop.">
 <meta property="og:url" content="https://sessionboard.dev/">
 <meta property="og:image" content="https://sessionboard.dev/hero.jpg">
 <meta name="twitter:card" content="summary_large_image">
@@ -105,7 +110,7 @@ html{background:#0B0B0C}</style>
 
 <section class="hs" style="padding: 24px 0 88px">
 <div class="hs-head">
-<span style="font: 700 11px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; letter-spacing: 0.14em; color: #4CC38A">CLAUDE CODE · MAC · OPEN SOURCE</span>
+<span style="font: 700 11px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; letter-spacing: 0.14em; color: #4CC38A">CLAUDE CODE MOD · MAC · OPEN SOURCE</span>
 <h1 class="hs-h1">Know what every session is doing.<br><span style="color: #7C7D83">Without opening one.</span></h1>
 <p class="hs-sub">One floating window gives each Claude Code chat a live stand-up: what it just did, what it’s doing, what’s next, and what’s waiting on you.</p>
 <div style="display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap">
@@ -190,7 +195,7 @@ claude plugin install session-board@session-board
 ```
 Then I start a new Claude Code session, or type /session-board in one. The first time, it builds the window app on my Mac (under a minute) and opens it. Chats already running show up too.
 
-Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my Mac and talks to no server.
+Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my Mac. Bug reports are sent only when I say "report" (or click Report), and never include anything from my chats.
 
 Update: `claude plugin update session-board@session-board`. Uninstall: `claude plugin uninstall session-board@session-board`, then quit it from the menu bar.
 
