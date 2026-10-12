@@ -1,0 +1,66 @@
+# Starts a release's window app on Windows and Linux with a sample session in place, and checks
+# it is still running 20 seconds later without having crashed (no crash.txt). Run it by hand for a
+# tag after the release's assets are up.
+name: Smoke test a release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, such as v0.2.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: session-board.exe
+          - os: ubuntu-22.04
+            asset: Session-Board-x86_64.AppImage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download and check
+        run: |
+          gh release download "${{ inputs.tag }}" -R "$GITHUB_REPOSITORY" -p "${{ matrix.asset }}" -p "${{ matrix.asset }}.sha256"
+          sha256sum -c "${{ matrix.asset }}.sha256"
+      - name: A sample session
+        run: |
+          mkdir -p ~/.claude/sessions ~/.claude/plugins/store
+          now=$(($(date +%s) * 1000))
+          echo "{\"sessionId\":\"smoke-1\",\"pid\":1,\"cwd\":\"/tmp\",\"name\":\"Smoke test\",\"status\":\"busy\",\"statusUpdatedAt\":$now,\"startedAt\":$now}" > ~/.claude/sessions/1.json
+          echo "{\"s:smoke-1\":{\"id\":\"smoke-1\",\"updatedAt\":$now,\"status\":\"working\",\"summary\":{\"done\":\"Started\",\"active\":[\"Checking it runs\"],\"pending\":[]}}}" > ~/.claude/plugins/store/session-board_smoke.json
+      - name: Run it (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb libfuse2 libwebkit2gtk-4.1-0 libayatana-appindicator3-1
+          chmod +x "${{ matrix.asset }}"
+          export SESSION_BOARD_SHARED_DIR="$RUNNER_TEMP/shared" APPIMAGE_EXTRACT_AND_RUN=1
+          xvfb-run -a "./${{ matrix.asset }}" > app.log 2>&1 &
+          sleep 20
+          cat app.log
+          pgrep -f "${{ matrix.asset }}" > /dev/null || { echo "the app is not running"; exit 1; }
+          test ! -f "$SESSION_BOARD_SHARED_DIR/crash.txt" || { cat "$SESSION_BOARD_SHARED_DIR/crash.txt"; exit 1; }
+          echo "running after 20 s, no crash"
+      - name: Run it (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:SESSION_BOARD_SHARED_DIR = "$env:RUNNER_TEMP\shared"
+          $p = Start-Process -FilePath ".\${{ matrix.asset }}" -PassThru -RedirectStandardError app.log
+          Start-Sleep -Seconds 20
+          Get-Content app.log -ErrorAction SilentlyContinue
+          if ($p.HasExited) { Write-Error "the app exited with $($p.ExitCode)"; exit 1 }
+          if (Test-Path "$env:SESSION_BOARD_SHARED_DIR\crash.txt") { Get-Content "$env:SESSION_BOARD_SHARED_DIR\crash.txt"; exit 1 }
+          "running after 20 s, no crash"
+          Stop-Process -Id $p.Id
