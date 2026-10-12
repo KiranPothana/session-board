@@ -857,7 +857,9 @@ test('only what the session is stopped on right now waits on you', async ($, on)
   await waitFor(() => !!(saved.get('s:' + ME) as any)?.summary)
   expect(systems[0]).toContain('only when the session is stopped on the user for it right now')
   expect(systems[0]).toContain('does not wait on them yet')
-  expect(systems[0]).toContain('asks them to do something themselves now')
+  expect(systems[0]).toContain('asked them to do something themselves now')
+  // An ask stays open through a side question about something else
+  expect(systems[0]).toContain('does not answer it: it still waits on them')
 })
 
 test('a status that moved since the record was read is read again, though the conversation looks the same', async ($, on) => {
