@@ -1023,31 +1023,58 @@ async function buildApp($) {
 // plugin, before it is installed: a download that doesn't match is thrown away.
 const RELEASES = 'https://github.com/KiranPothana/session-board/releases/download'
 
+async function releaseOf($) {
+  try {
+    return JSON.parse(await $.fs.read($.plugin.root + '/app/release.json'))
+  } catch {
+    return null
+  }
+}
+
+// macOS gets the downloaded app once a release has one (one app for Apple Silicon and Intel);
+// until then it builds the SwiftUI app as before
+async function macDownloads($) {
+  const release = await releaseOf($)
+  return /^[0-9a-f]{64}$/.test(release?.assets?.['macos-universal']?.sha256 ?? '')
+}
+
 async function downloadedApp($) {
   const os = await osOf($)
-  const release = JSON.parse(await $.fs.read($.plugin.root + '/app/release.json'))
-  const machine = os === 'windows'
-    ? String((await $.env.get('PROCESSOR_ARCHITECTURE')) ?? '')
-    : String((await $.process.run(['uname', '-m'], { timeoutMs: 5000 }).catch(() => null))?.stdout ?? '').trim()
-  const arch = /arm64|aarch64/i.test(machine) ? 'arm64' : 'x64'
-  const asset = release.assets?.[`${os}-${arch}`]
-  if (!asset?.file || !/^[0-9a-f]{64}$/.test(asset.sha256 ?? '')) throw new Error(`there's no Session Board window app for ${os} on ${arch} yet`)
-  const dir = os === 'windows'
-    ? ((await $.env.get('LOCALAPPDATA')) || (await homeOf($)) + '/AppData/Local') + '/Programs/Session Board'
-    : (await dataDir($)) + '/app'
+  const release = await releaseOf($)
+  if (!release) throw new Error("the plugin's app/release.json is missing")
+  let key = 'macos-universal'
+  if (os !== 'macos') {
+    const machine = os === 'windows'
+      ? String((await $.env.get('PROCESSOR_ARCHITECTURE')) ?? '')
+      : String((await $.process.run(['uname', '-m'], { timeoutMs: 5000 }).catch(() => null))?.stdout ?? '').trim()
+    key = `${os}-${/arm64|aarch64/i.test(machine) ? 'arm64' : 'x64'}`
+  }
+  const asset = release.assets?.[key]
+  if (!asset?.file || !/^[0-9a-f]{64}$/.test(asset.sha256 ?? '')) throw new Error(`there's no Session Board window app for ${key} yet`)
+  // Where it goes, and the file saying which version is there
+  let dir, app, versionFile
+  if (os === 'macos') {
+    dir = (await homeOf($)) + '/Applications'
+    app = dir + '/' + APP_NAME
+    versionFile = (await dataDir($)) + '/app-version.txt'
+  } else {
+    dir = os === 'windows' ? ((await $.env.get('LOCALAPPDATA')) || (await homeOf($)) + '/AppData/Local') + '/Programs/Session Board' : (await dataDir($)) + '/app'
+    app = dir + '/' + asset.file
+    versionFile = dir + '/version.txt'
+  }
   let have = ''
   try {
-    have = String(await $.fs.read(dir + '/version.txt')).trim()
+    have = String(await $.fs.read(versionFile)).trim()
   } catch {
     // Not installed yet
   }
-  const app = dir + '/' + asset.file
-  return { os, dir, app, asset, version: release.version, current: have === release.version && (await $.fs.exists(app)) }
+  return { os, dir, app, asset, versionFile, version: release.version, current: have === release.version && (await $.fs.exists(app)) }
 }
 
 async function installApp($, d) {
   const run = (argv, timeoutMs = 60000) => $.process.run(argv, { timeoutMs })
   const ps = (script, timeoutMs = 60000) => powershell($, script, timeoutMs)
+  if (d.os === 'macos') return installMacApp($, d, run)
   const tmp = d.app + '.download'
   if (d.os === 'windows') await ps(`New-Item -ItemType Directory -Force -Path ${psQuote(d.dir)} | Out-Null`)
   else await run(['mkdir', '-p', d.dir])
@@ -1069,13 +1096,39 @@ async function installApp($, d) {
     await run(['mv', '-f', tmp, d.app])
     await run(['chmod', '+x', d.app])
   }
-  await $.fs.write(d.dir + '/version.txt', d.version)
+  await $.fs.write(d.versionFile, d.version)
+}
+
+// macOS: the app comes packed (Session Board.app in a .tar.gz). The running one is stopped and
+// replaced. With an Apple Development certificate on this Mac it's signed with that, as the
+// SwiftUI build was, so macOS keeps its Accessibility permission across updates.
+async function installMacApp($, d, run) {
+  const data = await dataDir($)
+  const tmp = data + '/' + d.asset.file + '.download'
+  await run(['mkdir', '-p', data, d.dir])
+  const got = await run(['curl', '-fsSL', '--retry', '2', '-o', tmp, `${RELEASES}/v${d.version}/${d.asset.file}`], 5 * 60 * 1000)
+  if (got.exitCode !== 0) throw new Error('the window app could not be downloaded: ' + oneLine(got.stderr, 120))
+  const sum = String((await run(['shasum', '-a', '256', tmp])).stdout ?? '').trim().split(/\s+/)[0].toLowerCase()
+  if (sum !== d.asset.sha256) {
+    await run(['rm', '-f', tmp]).catch(() => {})
+    throw new Error("the downloaded window app didn't match its checksum, so it wasn't installed")
+  }
+  await run(['pkill', '-x', 'SessionBoard']).catch(() => {})
+  await run(['pkill', '-x', 'session-board']).catch(() => {})
+  await run(['rm', '-rf', d.app])
+  const unpacked = await run(['tar', '-xzf', tmp, '-C', d.dir])
+  await run(['rm', '-f', tmp]).catch(() => {})
+  if (unpacked.exitCode !== 0) throw new Error('the window app could not be unpacked: ' + oneLine(unpacked.stderr, 120))
+  const ids = String((await run(['security', 'find-identity', '-v', '-p', 'codesigning']).catch(() => ({ stdout: '' }))).stdout ?? '')
+  const identity = /\b([0-9A-F]{40})\b "Apple Development/.exec(ids)?.[1]
+  if (identity) await run(['codesign', '--force', '--deep', '-s', identity, d.app]).catch(() => {})
+  await $.fs.write(d.versionFile, d.version)
 }
 
 // Gets the window app ready: built on macOS, downloaded on Windows and Linux. One session at a
 // time (a lease in the store); the others throw "building" and leave it to that one.
 async function readyApp($) {
-  if ((await osOf($)) === 'macos') return { os: 'macos', app: await buildApp($) }
+  if ((await osOf($)) === 'macos' && !(await macDownloads($))) return { os: 'macos', app: await buildApp($) }
   const d = await downloadedApp($)
   if (d.current) return d
   const now = await $.clock.now()
@@ -1178,7 +1231,7 @@ export function register(on) {
     } catch {
       // Without the request the window still starts, following your settings as usual
     }
-    if ((await osOf($)) !== 'macos') {
+    if ((await osOf($)) !== 'macos' || (await macDownloads($))) {
       const d = await downloadedApp($).catch((err) => ({ error: err }))
       if (d.error) return { text: 'Session Board: ' + oneLine(d.error.message, 200) }
       void openBoard($).catch((err) => reportFailure($, err))

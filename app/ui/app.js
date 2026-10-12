@@ -3,6 +3,7 @@
 // how its layout is checked with screenshots.
 import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, sessionText, assignColors, inkFor, ago, SWATCHES, isQuiet, Attention, soundFor, popupDetail, NEEDS_YOU, DONE, focusedFrom, parseCrash } from './model.js'
 import { sampleState } from './sample.js'
+import { DEFAULT_SHORTCUT, label as shortcutLabel, Recorder, clash, fromLegacy } from './shortcut.js'
 
 const tauri = window.__TAURI__
 const invoke = (cmd, args) => (tauri ? tauri.core.invoke(cmd, args) : Promise.resolve(null))
@@ -11,7 +12,6 @@ const VERSION = '0.2.0'
 window.addEventListener('error', (e) => invoke('log', { msg: `board: ${e.message} at ${e.filename}:${e.lineno}` }))
 window.addEventListener('unhandledrejection', (e) => invoke('log', { msg: `board: ${e.reason?.message ?? e.reason}` }))
 const REPO = 'https://github.com/KiranPothana/session-board'
-const DEFAULT_SHORTCUT = 'Ctrl+Alt+S'
 // Session Board's report inbox (reports-worker/): files a report privately, no GitHub account needed
 const INBOX = 'https://session-board-reports.kiran-987.workers.dev/report'
 const UNDO_MS = 6000
@@ -99,15 +99,100 @@ function noticeAttention(rows, now, forced = null) {
   const sound = forced || ui.testing ? null : soundFor(events, { soundsOn: prefs.soundsOn, moments: prefs.soundMoments, lastSoundAt: ui.lastSoundAt, now })
   if (sound !== null) {
     ui.lastSoundAt = now
-    play(prefs.soundChoices[sound] ?? DEFAULT_SOUNDS[sound], prefs.alertVolume || 1, DEFAULT_SOUNDS[sound])
+    play(prefs.soundChoices[sound] ?? DEFAULT_SOUNDS[sound], prefs.alertVolume || 1, DEFAULT_SOUNDS[sound], { alert: true })
   }
 }
 
-function play(id, volume = 1, fallback) {
-  const file = (SOUNDS[id] ?? SOUNDS[fallback] ?? SOUNDS[DEFAULT_SOUNDS[0]])[1]
-  const audio = new Audio(file)
-  audio.volume = Math.max(0, Math.min(1, volume))
+// The sounds besides the bundled ones: macOS's alert sounds (on a Mac) and your own
+let extraSounds = { mac: [], own: [] }
+async function loadSounds() {
+  extraSounds = (await invoke('list_sounds').catch(() => null)) ?? { mac: [], own: [] }
+}
+const soundName = (id) => {
+  if (SOUNDS[id]) return SOUNDS[id][0]
+  if (id.startsWith('mac:') && extraSounds.mac.includes(id.slice(4))) return id.slice(4)
+  if (id.startsWith('custom:') && extraSounds.own.includes(id.slice(7))) return id.slice(7).replace(/\.[^.]+$/, '')
+  return null
+}
+const MIME = { aiff: 'audio/aiff', aif: 'audio/aiff', wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', flac: 'audio/flac', caf: 'audio/x-caf' }
+
+async function audioFor(id) {
+  if (SOUNDS[id]) return new Audio(SOUNDS[id][1])
+  if (!soundName(id)) return null
+  const data = await invoke('read_sound', { id }).catch(() => null)
+  if (!data) return null
+  const ext = (id.startsWith('mac:') ? 'aiff' : id.split('.').pop() ?? '').toLowerCase()
+  return new Audio(`data:${MIME[ext] ?? 'audio/mpeg'};base64,${data}`)
+}
+
+// Plays a sound; a missing one falls back to the moment's default. An automatic alert (alert:
+// true) on a Mac plays at the alert volume you chose by setting the Mac's volume and putting
+// yours back after, unless you changed it meanwhile; muted stays muted. Elsewhere, and for
+// ▶ Play, the volume is the sound's own.
+async function play(id, volume = 1, fallback, { alert = false } = {}) {
+  const audio = (await audioFor(id)) ?? (await audioFor(fallback ?? DEFAULT_SOUNDS[0]))
+  if (!audio) return
+  const target = Math.round((prefs.alertVolume || 0) * 100)
+  if (alert && state.platform === 'macos' && target && tauri) {
+    const now = await invoke('mac_volume', { set: null }).catch(() => null)
+    if (now?.muted) return
+    if (now?.volume != null && Math.abs(now.volume - target) > 1) {
+      prefs.volumeToRestore = now.volume
+      savePrefs()
+      await invoke('mac_volume', { set: target })
+      audio.addEventListener('ended', () => setTimeout(restoreVolume, 250, target), { once: true })
+      audio.addEventListener('error', () => restoreVolume(target), { once: true })
+    }
+    audio.volume = 1
+  } else {
+    audio.volume = Math.max(0, Math.min(1, volume))
+  }
   audio.play().catch(() => {})
+}
+
+// Puts your volume back, only if it's still the alert's (you didn't change it meanwhile); also
+// at launch, in case the app quit while an alert played
+async function restoreVolume(target) {
+  if (prefs.volumeToRestore == null) return
+  const now = await invoke('mac_volume', { set: null }).catch(() => null)
+  if (target == null || (now?.volume != null && Math.abs(now.volume - target) <= 2)) await invoke('mac_volume', { set: prefs.volumeToRestore })
+  prefs.volumeToRestore = null
+  savePrefs()
+}
+
+// Settings › Sounds › Add your own…: any file the system can play, under 10 seconds and 5 MB
+function addOwnSound(moment) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'audio/*'
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    ui.soundError = null
+    if (file.size > 5 * 1024 * 1024) { ui.soundError = `${file.name} is over 5 MB.`; return render() }
+    const url = URL.createObjectURL(file)
+    const seconds = await new Promise((resolve) => {
+      const a = new Audio()
+      a.addEventListener('loadedmetadata', () => resolve(a.duration), { once: true })
+      a.addEventListener('error', () => resolve(NaN), { once: true })
+      a.src = url
+    })
+    URL.revokeObjectURL(url)
+    if (!Number.isFinite(seconds)) { ui.soundError = `${file.name} isn't a sound this computer can play.`; return render() }
+    if (seconds > 10) { ui.soundError = `${file.name} is ${Math.round(seconds)} seconds long. Use one under 10.`; return render() }
+    const data = btoa(Array.from(new Uint8Array(await file.arrayBuffer()), (b) => String.fromCharCode(b)).join(''))
+    try {
+      const saved = await invoke('add_sound', { name: file.name, data })
+      await loadSounds()
+      prefs.soundChoices = prefs.soundChoices.map((c, i) => (i === moment ? 'custom:' + saved : c))
+      savePrefs()
+      play('custom:' + saved)
+    } catch (err) {
+      ui.soundError = `Couldn't add ${file.name}: ${err}`
+    }
+    render()
+  })
+  input.click()
 }
 
 // The popup window sits beside the board: left of it, else right, else above, else below, else
@@ -143,6 +228,29 @@ async function placeToasts() {
   await toastWin.setPosition(new tauri.dpi.LogicalPosition(Math.round(x), Math.round(y)))
   await invoke('set_toasts_visible', { visible: true })
   debug('toasts shown')
+}
+
+// ---- Collapsed: the window fits the counts line, and gets its height back when you open it
+// again (one height remembered per window kind)
+async function fitCollapsed(changed = false) {
+  if (!tauri) return
+  const w = tauri.window.getCurrentWindow()
+  const scale = await w.scaleFactor()
+  const size = (await w.innerSize()).toLogical(scale)
+  const key = prefs.regularWindow ? 'expandedHeightRegular' : 'expandedHeight'
+  if (prefs.collapsed) {
+    // The title bar, the header and the strip: everything above the list
+    const app = document.getElementById('app')
+    const h = [...app.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + 1, 0)
+    if (changed && size.height > h + 20) prefs[key] = size.height
+    await w.setMinSize(new tauri.dpi.LogicalSize(260, Math.ceil(h)))
+    if (Math.abs(size.height - h) > 1) await w.setSize(new tauri.dpi.LogicalSize(size.width, Math.ceil(h)))
+  } else if (changed) {
+    await w.setMinSize(new tauri.dpi.LogicalSize(260, 160))
+    const back = prefs[key] > 120 ? prefs[key] : 640
+    if (size.height <= 200) await w.setSize(new tauri.dpi.LogicalSize(size.width, back))
+  }
+  savePrefs()
 }
 
 // ---- Hide when you switch away: the floating board shows only while Claude is the app in front
@@ -212,10 +320,17 @@ function card(row, n, prefix, dark) {
     : ''
   const asking = ui.dismissAsk === row.id
   return `<article class="card ${viewing ? 'viewing' : ''} ${row.status === 'idle' ? 'is-idle' : ''}" style="--ring:${ring}" data-card="${esc(row.id)}">
-<div class="top"><span class="tile" style="${tileStyle(row, dark)}">${String(n).padStart(2, '0')}</span><span class="chip">${chip}</span>${row.side ? '<span class="chip side">SIDE TASK</span>' : ''}
+<div class="top"><button class="tile" data-action="colours" data-id="${esc(row.id)}" style="${tileStyle(row, dark)}" title="Pick a colour for this session">${String(n).padStart(2, '0')}</button><span class="chip">${chip}</span>${row.side ? '<span class="chip side">SIDE TASK</span>' : ''}
 ${asking ? '<span class="dismiss-ask">Dismiss?</span>' : statusLabel(row)}<button class="dismiss" data-action="dismiss" data-id="${esc(row.id)}" title="Dismiss">✕</button></div>
 <button class="name" data-action="open" data-id="${esc(row.id)}" title="Open this session · ${esc(row.place)}">${twoTone(row, prefix)}</button>
-<div class="lines selectable">${body}${removedBlock}</div></article>`
+${ui.coloursFor === row.id ? swatchPicker(row, dark) : ''}<div class="lines selectable">${body}${removedBlock}</div></article>`
+}
+
+// The colours a session's tile can take: pick one, or go back to the automatic one
+function swatchPicker(row, dark) {
+  const current = prefs.sessionColors[row.id] ?? prefs.autoColors[row.id]
+  const swatches = Object.entries(SWATCHES).map(([name, [d, l]]) => `<button class="swatch ${name === current ? 'on' : ''}" data-action="colour" data-id="${esc(row.id)}" data-v="${name}" title="${name}" style="background:${dark ? d : l}"></button>`).join('')
+  return `<div class="picker"><b>Colour for this session</b><div class="swatches">${swatches}</div>${prefs.sessionColors[row.id] ? `<button class="quiet-btn" data-action="colour" data-id="${esc(row.id)}" data-v="">Back to automatic</button>` : ''}</div>`
 }
 
 function header(p) {
@@ -231,7 +346,7 @@ function header(p) {
 <div class="state-bar">${bar}</div><div class="legend">${leg(p.needsYou, '--amber', 'Needs you')}${leg(p.working, '--green', 'Working')}${leg(p.idle, '--idle', 'Idle')}</div></div>`
 }
 
-const keyLabel = (k) => (state.platform === 'macos' ? k.replace('Ctrl+', '⌃').replace('Alt+', '⌥').replace('Shift+', '⇧').replace(/Cmd\+|Super\+/, '⌘') : k)
+const keyLabel = (k) => shortcutLabel(k, state.platform)
 
 function strip(p, prefixes, dark) {
   if (ui.settings) return ''
@@ -270,12 +385,91 @@ ${floating ? `<div class="setting"><div class="txt"><b>Hide when you switch away
 <div class="cell"><span class="section">SUMMARIES</span>
 <div class="setting"><div class="txt"><b>Summaries by Sonnet</b><span>A few small calls per turn, on your account. Off: each card shows what you asked and its task list.</span></div>${sw(s.summaries, 'shared', 'data-key="summaries"')}</div></div>
 ${soundsSection()}
-<div class="cell"><span class="section">SHORTCUT</span>
-<div class="setting"><div class="txt"><b>Show or hide, from any app</b><span>${esc(keyLabel(prefs.shortcut))}</span></div></div></div>
+${shortcutSection()}
 <div class="cell"><span class="section">FEEDBACK</span>
 <div class="setting"><div class="txt"><b>Something wrong, or an idea?</b><span>Opens GitHub with your versions filled in. Or tell Claude in any session, and say report.</span></div></div>
 <div style="display:flex;gap:8px"><button class="quiet-btn" data-action="feedback" data-v="bug">Report a problem</button><button class="quiet-btn" data-action="feedback" data-v="idea">Suggest an idea</button></div>
 <div class="version">Session Board ${VERSION}</div></div></div>`
+}
+
+// Settings › Shortcut: click, then press the new keys (or on a Mac tap a right-hand ⌥, ⌘ or ⌃)
+function shortcutSection() {
+  const rec = ui.recording
+  const mac = state.platform === 'macos'
+  const hint = (rec ? 'Press the new keys' : 'Click, then press the new keys') + (mac ? ', or tap a right-hand ⌥, ⌘ or ⌃' : '') + '. Esc cancels.'
+  const pending = ui.pendingShortcut
+  return `<div class="cell"><span class="section">SHORTCUT</span>
+<div class="setting"><div class="txt"><b>Show or hide, from any app</b><span>${hint}</span></div>
+${!rec && prefs.shortcut !== DEFAULT_SHORTCUT ? `<button class="quiet-btn plain" data-action="shortcut-reset" title="Back to ${esc(keyLabel(DEFAULT_SHORTCUT))}">Reset</button>` : ''}
+<button class="recorder ${rec ? 'rec' : pending ? 'clash' : ''}" data-action="shortcut-record" title="${rec ? 'Click to cancel' : 'Click, then press the new keys'}">${rec ? 'Type it…' : esc(keyLabel(pending ?? prefs.shortcut))}</button></div>
+${ui.shortcutError ? `<div class="warn">${esc(ui.shortcutError)}</div>` : ''}
+${pending ? `<div class="warn">${esc(clash(pending, state.platform))}</div><div style="display:flex;gap:8px"><button class="quiet-btn" data-action="shortcut-anyway">Use ${esc(keyLabel(pending))} anyway</button><button class="quiet-btn" data-action="shortcut-record">Pick another</button></div>` : ''}</div>`
+}
+
+async function useShortcut(keys) {
+  const before = prefs.shortcut
+  try {
+    await invoke('set_shortcut', { keys })
+    prefs.shortcut = keys
+    ui.shortcutError = null
+  } catch (err) {
+    ui.shortcutError = `${keyLabel(keys)} couldn't be set: ${String(err)}. It's still ${keyLabel(before)}.`
+    await invoke('set_shortcut', { keys: before }).catch(() => {})
+  }
+  ui.pendingShortcut = null
+  savePrefs()
+  render()
+}
+
+function stopRecording() {
+  ui.recording = false
+  ui.recorder = null
+  invoke('take_keyboard', { take: false })
+}
+
+function onRecordKey(e) {
+  if (!ui.recording) return
+  e.preventDefault()
+  const got = ui.recorder.feed(e)
+  if (!got) return
+  stopRecording()
+  if (got.cancel) {
+    invoke('set_shortcut', { keys: prefs.shortcut }).catch(() => {})
+  } else if (got.problem) {
+    ui.shortcutError = got.problem
+    invoke('set_shortcut', { keys: prefs.shortcut }).catch(() => {})
+  } else if (clash(got.keys, state.platform)) {
+    ui.pendingShortcut = got.keys
+    invoke('set_shortcut', { keys: prefs.shortcut }).catch(() => {})
+  } else {
+    useShortcut(got.keys)
+    return
+  }
+  render()
+}
+document.addEventListener('keydown', onRecordKey, true)
+document.addEventListener('keyup', onRecordKey, true)
+
+// macOS: the SwiftUI app's settings carry over, once
+async function importLegacy() {
+  if (prefs.imported || state.platform !== 'macos') return
+  prefs.imported = true
+  const d = await invoke('legacy_settings').catch(() => null)
+  if (d && typeof d === 'object') {
+    if (d.shortcutKey != null && d.shortcutKeyCode != null) prefs.shortcut = fromLegacy(Number(d.shortcutKeyCode), Number(d.shortcutMods ?? 0), String(d.shortcutKey))
+    for (const k of ['theme', 'regularWindow', 'hideWhenAway', 'terminalsCount', 'soundsOn', 'collapsed', 'askedAccessibility']) if (d[k] !== undefined) prefs[k] = d[k]
+    for (const k of ['sessionColors', 'autoColors', 'dismissedAt', 'removedItems']) if (d[k] && typeof d[k] === 'object') prefs[k] = d[k]
+    if (Array.isArray(d.dismissed)) prefs.dismissed = d.dismissed
+    if (Array.isArray(d.soundChoices)) prefs.soundChoices = d.soundChoices
+    if (typeof d.alertVolume === 'number') prefs.alertVolume = d.alertVolume
+    prefs.soundMoments = [d.soundNeedsYou ?? true, d.soundYourTurn ?? true, d.soundDone ?? false]
+    if (typeof d.crashSeenAt === 'number') prefs.crashSeenAt = d.crashSeenAt * 1000
+    await invoke('set_shortcut', { keys: prefs.shortcut }).catch(() => {})
+    invoke('set_window_mode', { regular: !!prefs.regularWindow })
+    savePrefs()
+    render()
+    fitCollapsed(true).catch(() => {})
+  } else savePrefs()
 }
 
 function soundsSection() {
@@ -286,15 +480,23 @@ function soundsSection() {
   const rows = MOMENTS.map(([title, detail, dot], m) => {
     const choice = prefs.soundChoices[m] ?? DEFAULT_SOUNDS[m]
     const open = ui.openChooser === m
-    const chips = Object.entries(SOUNDS).map(([id, [name]]) => `<button class="chip-btn ${id === choice ? 'on' : ''}" data-action="choose-sound" data-m="${m}" data-v="${id}">${esc(name)}</button>`).join('')
+    const chip = (id, name, own = false) => `<span class="chip-wrap"><button class="chip-btn ${id === choice ? 'on' : ''}" data-action="choose-sound" data-m="${m}" data-v="${esc(id)}">${esc(name)}</button>${own ? `<button class="chip-x" data-action="remove-sound" data-v="${esc(id)}" title="Remove this sound">✕</button>` : ''}</span>`
+    const group = (title, items) => (items.length ? `<div class="chip-group"><span class="section">${title}</span><div class="chips">${items.join('')}</div></div>` : '')
+    const chips = [
+      group('DEFAULT', [chip(DEFAULT_SOUNDS[m], 'Default · ' + SOUNDS[DEFAULT_SOUNDS[m]][0])]),
+      group('SESSION BOARD', Object.entries(SOUNDS).filter(([id]) => id.startsWith('board:')).map(([id, [n]]) => chip(id, n))),
+      group(state.platform === 'macos' ? 'MAC ALERTS' : 'SYSTEM', extraSounds.mac.map((n) => chip('mac:' + n, n))),
+      group('KENNEY · CC0', Object.entries(SOUNDS).filter(([id]) => id.startsWith('kenney:')).map(([id, [n]]) => chip(id, n))),
+      `<div class="chip-group"><span class="section">YOURS</span><div class="chips">${extraSounds.own.map((f) => chip('custom:' + f, f.replace(/\.[^.]+$/, ''), true)).join('')}<button class="chip-btn add" data-action="add-sound" data-m="${m}" title="A file of yours: under 10 seconds and 5 MB">+ Add your own…</button></div></div>`,
+    ].join('')
     return `<div class="sound-row"><span class="dot" style="background:var(${dot})"></span><div class="txt"><b>${title}</b><span>${detail}</span>
-<button class="sound-name" data-action="chooser" data-m="${m}">${esc(SOUNDS[choice]?.[0] ?? 'Missing sound')} ${open ? '⌃' : '⌄'}</button></div>
-<button class="play" data-action="play" data-v="${choice}">▶ Play</button>${sw(prefs.soundMoments[m], 'moment', `data-m="${m}"`)}</div>${open ? `<div class="chips">${chips}</div>` : ''}`
+<button class="sound-name" data-action="chooser" data-m="${m}">${esc(soundName(choice) ?? 'Missing sound')} ${open ? '⌃' : '⌄'}</button></div>
+<button class="play" data-action="play" data-v="${esc(choice)}" data-m="${m}">▶ Play</button>${sw(prefs.soundMoments[m], 'moment', `data-m="${m}"`)}</div>${open ? `<div class="chooser">${chips}</div>` : ''}`
   }).join('')
   return `<div class="cell"><span class="section">SOUNDS</span>
 <div class="setting"><div class="txt"><b>Sounds</b><span>Never for ordinary work, never for the session you're viewing.</span></div>${sw(prefs.soundsOn, 'pref', 'data-key="soundsOn"')}</div>
 <div class="${prefs.soundsOn ? '' : 'off-block'}"><div class="setting"><div class="txt"><b>Alert volume</b></div><span class="vol-label">${prefs.alertVolume ? Math.round(prefs.alertVolume * 100) + '%' : 'Your volume'}</span></div>
-<div class="bars">${vol}</div><div class="sounds">${rows}</div></div></div>`
+<div class="bars">${vol}</div><div class="vol-note">${prefs.alertVolume ? (state.platform === 'macos' ? "Sounds that play on their own play at this volume, then yours goes back." : 'Sounds that play on their own play this loud.') : (state.platform === 'macos' ? "Sounds play at your Mac's volume." : 'Sounds play at full volume.')}</div>${ui.soundError ? `<div class="warn">${esc(ui.soundError)}</div>` : ''}<div class="sounds">${rows}</div></div></div>`
 }
 
 function render() {
@@ -309,9 +511,14 @@ function render() {
     body = list + undo + dismissedSection(p)
   }
   const scroll = document.getElementById('list')?.scrollTop ?? 0
+  const settingsScroll = document.querySelector('.settings')?.scrollTop ?? 0
   document.getElementById('app').innerHTML = `<div class="titlebar" data-tauri-drag-region>Session Board<button class="close" data-action="hide" title="Close">✕</button></div>${header(p)}${strip(p, prefixes, dark)}${body}`
   const list = document.getElementById('list')
   if (list) list.scrollTop = scroll
+  // Redrawn every read: Settings stays where you scrolled it
+  const settings = document.querySelector('.settings')
+  if (settings) settings.scrollTop = settingsScroll
+  if (prefs.collapsed) fitCollapsed().catch(() => {})
   const title = `◉ ${p.working}` + (p.needsYou ? ` · ${p.needsYou}!` : '')
   invoke('set_tray', { title, tooltip: `Session Board: ${p.working} working, ${p.needsYou} need you` })
 }
@@ -408,7 +615,7 @@ document.addEventListener('click', (e) => {
   const row = state.rows.find((r) => r.id === id)
   switch (action) {
     case 'settings': ui.settings = !ui.settings; if (ui.settings) prefs.collapsed = false; break
-    case 'collapse': prefs.collapsed = !prefs.collapsed; break
+    case 'collapse': prefs.collapsed = !prefs.collapsed; savePrefs(); render(); fitCollapsed(true); return
     case 'hide': prefs.userHidden = true; tauri?.window.getCurrentWindow().hide(); break
     case 'dismiss':
       if (ui.dismissAsk !== id) { ui.dismissAsk = id; break }
@@ -429,14 +636,41 @@ document.addEventListener('click', (e) => {
     case 'reveal': prefs.collapsed = false; render(); document.querySelector(`[data-card="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }); return
     case 'open': if (row) openSession(row); return
     case 'theme': prefs.theme = v; break
-    case 'window': prefs.regularWindow = v === 'regular'; tauri?.window.getCurrentWindow().setAlwaysOnTop(!prefs.regularWindow); break
+    case 'window': prefs.regularWindow = v === 'regular'; invoke('set_window_mode', { regular: prefs.regularWindow }); break
     case 'shared': setShared(key, !state.shared[key]); break
     case 'pref': prefs[key] = !prefs[key]; if (key === 'hideWhenAway' || key === 'terminalsCount') { ui.away = false; invoke('show_window', { label: 'board' }) } break
     case 'moment': prefs.soundMoments[Number(el.dataset.m)] = !prefs.soundMoments[Number(el.dataset.m)]; break
     case 'volume': prefs.alertVolume = Number(v); if (prefs.alertVolume) play(prefs.soundChoices[0], prefs.alertVolume); break
     case 'chooser': ui.openChooser = ui.openChooser === Number(el.dataset.m) ? null : Number(el.dataset.m); break
     case 'choose-sound': prefs.soundChoices = prefs.soundChoices.map((c, i) => (i === Number(el.dataset.m) ? v : c)); play(v); break
-    case 'play': play(v); return
+    case 'play': play(v, 1, DEFAULT_SOUNDS[Number(el.dataset.m)]); return
+    case 'colours': ui.coloursFor = ui.coloursFor === id ? null : id; break
+    case 'colour':
+      if (v) prefs.sessionColors[id] = v
+      else delete prefs.sessionColors[id]
+      ui.coloursFor = null
+      break
+    case 'add-sound': addOwnSound(Number(el.dataset.m)); return
+    case 'remove-sound':
+      invoke('remove_sound', { id: v }).then(loadSounds).then(() => {
+        // A moment that used it goes back to its default
+        prefs.soundChoices = prefs.soundChoices.map((c, i) => (c === v ? DEFAULT_SOUNDS[i] : c))
+        savePrefs()
+        render()
+      })
+      return
+    case 'shortcut-record':
+      if (ui.recording) { stopRecording(); invoke('set_shortcut', { keys: prefs.shortcut }).catch(() => {}); break }
+      ui.recording = true
+      ui.pendingShortcut = null
+      ui.shortcutError = null
+      ui.recorder = new Recorder(state.platform)
+      // While it records, the current shortcut is off, and the board takes the keyboard
+      invoke('set_shortcut', { keys: 'tap:0' }).catch(() => {})
+      invoke('take_keyboard', { take: true })
+      break
+    case 'shortcut-anyway': useShortcut(ui.pendingShortcut); return
+    case 'shortcut-reset': useShortcut(DEFAULT_SHORTCUT); return
     case 'crash-send': sendCrash(); return
     case 'crash-close': closeCrash(); return
     case 'accessibility': invoke('ask_accessibility'); invoke('plugin:opener|open_url', { url: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility' }); return
@@ -483,6 +717,12 @@ if (tauri) {
   setInterval(() => followFrontApp().catch(() => {}), 500)
   setInterval(() => followFocus().catch(() => {}), 750)
   setTimeout(() => checkCrash().catch(() => {}), 1500)
+  setTimeout(() => importLegacy().catch(() => {}), 1000)
+  // The window kind and size you left it with
+  setTimeout(() => { invoke('set_window_mode', { regular: !!prefs.regularWindow }); fitCollapsed() }, 300)
+  loadSounds().then(render)
+  // An alert's volume change left behind when the app last quit: put it back
+  if (prefs.volumeToRestore != null) restoreVolume(null)
   // macOS: ask once for the Accessibility permission the Desktop highlight needs
   setTimeout(() => {
     if (state.platform === 'macos' && !ui.accessibility && !prefs.askedAccessibility && !ui.testing) {

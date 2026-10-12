@@ -279,18 +279,64 @@ fn show_board(app: AppHandle) {
     }
 }
 
-// Pressing the shortcut shows or hides the board; the page chooses the keys (Settings)
+// Pressing the shortcut shows or hides the board; the page chooses it (Settings). Keys such as
+// "Ctrl+Alt+S", or on macOS "tap:<key code>" for a right-hand modifier tapped on its own.
 #[tauri::command]
 fn set_shortcut(app: AppHandle, keys: String) -> Result<(), String> {
-    let shortcut: Shortcut = keys.parse().map_err(|e| format!("{e}"))?;
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
+    #[cfg(target_os = "macos")]
+    platform::taps::set(None);
+    if let Some(code) = keys.strip_prefix("tap:") {
+        #[cfg(target_os = "macos")]
+        {
+            platform::taps::set(code.parse().ok());
+            return Ok(());
+        }
+        #[cfg(not(target_os = "macos"))]
+        return Err(format!("a modifier tap ({code}) works only on macOS for now"));
+    }
+    let shortcut: Shortcut = keys.parse().map_err(|e| format!("{e}"))?;
     gs.on_shortcut(shortcut, |app, _, event| {
         if event.state == ShortcutState::Pressed {
             toggle(app);
         }
     })
     .map_err(|e| e.to_string())
+}
+
+// While you record a new shortcut the board takes the keyboard, and gives it back after
+#[tauri::command]
+fn take_keyboard(app: AppHandle, take: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::ManagerExt;
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Ok(panel) = app2.get_webview_panel("board") {
+                if take {
+                    panel.show_and_make_key();
+                } else {
+                    panel.resign_key_window();
+                }
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    if take {
+        if let Some(w) = board(&app) {
+            let _ = w.set_focus();
+        }
+    }
+}
+
+// macOS: the SwiftUI app's settings, to carry over once
+#[tauri::command]
+fn legacy_settings() -> Value {
+    #[cfg(target_os = "macos")]
+    return platform::legacy_settings();
+    #[cfg(not(target_os = "macos"))]
+    Value::Null
 }
 
 // The pages' errors, in the app's log (stderr), where they can be read
@@ -331,6 +377,140 @@ fn read_crash(since: u64) -> Value {
     platform::newest_crash(&shared_dir(), since)
 }
 
+// ---- Sounds beyond the bundled ones: macOS's alert sounds and your own (in the shared folder's
+// sounds/), handed to the page as data it can play
+
+const MAC_ALERTS: [&str; 14] = ["Glass", "Ping", "Hero", "Submarine", "Purr", "Funk", "Pop", "Tink", "Blow", "Bottle", "Frog", "Morse", "Sosumi", "Basso"];
+const SOUND_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+fn sound_path(id: &str) -> Option<PathBuf> {
+    if let Some(name) = id.strip_prefix("mac:") {
+        return MAC_ALERTS.contains(&name).then(|| PathBuf::from(format!("/System/Library/Sounds/{name}.aiff")));
+    }
+    let file = id.strip_prefix("custom:")?;
+    // A file name only, never a path out of the folder
+    if file.contains('/') || file.contains('\\') || file.starts_with('.') {
+        return None;
+    }
+    Some(shared_dir().join("sounds").join(file))
+}
+
+// The sounds besides the bundled ones: macOS's (on a Mac) and yours
+#[tauri::command]
+fn list_sounds() -> Value {
+    let mac: Vec<&str> = if cfg!(target_os = "macos") { MAC_ALERTS.to_vec() } else { vec![] };
+    let mut own: Vec<String> = fs::read_dir(shared_dir().join("sounds"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| !n.starts_with('.'))
+        .collect();
+    own.sort();
+    json!({ "mac": mac, "own": own })
+}
+
+// A sound's bytes, base64, for the page to play
+#[tauri::command]
+fn read_sound(id: String) -> Result<String, String> {
+    use base64::Engine;
+    let path = sound_path(&id).ok_or("not a sound")?;
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+// Keeps a file you picked as one of your sounds; answers its name (made unique)
+#[tauri::command]
+fn add_sound(name: String, data: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string())?;
+    if bytes.len() > SOUND_MAX_BYTES {
+        return Err("it's over 5 MB".into());
+    }
+    let clean: String = name.chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '\0')).collect();
+    let clean = clean.trim_start_matches('.').to_string();
+    if clean.is_empty() {
+        return Err("it has no name".into());
+    }
+    let dir = shared_dir().join("sounds");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let (stem, ext) = match clean.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (clean.clone(), String::new()),
+    };
+    let mut file = clean.clone();
+    let mut n = 2;
+    while dir.join(&file).exists() {
+        file = format!("{stem} {n}{ext}");
+        n += 1;
+    }
+    fs::write(dir.join(&file), bytes).map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
+#[tauri::command]
+fn remove_sound(id: String) -> Result<(), String> {
+    match (id.starts_with("custom:"), sound_path(&id)) {
+        (true, Some(path)) => fs::remove_file(path).map_err(|e| e.to_string()),
+        _ => Err("not one of your sounds".into()),
+    }
+}
+
+// macOS: the output volume (0-100) and whether it's muted, and setting it, so an alert can play
+// at the volume you chose and put yours back after, as the SwiftUI app did
+#[tauri::command]
+fn mac_volume(set: Option<u8>) -> Value {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(v) = set {
+            let _ = std::process::Command::new("osascript").args(["-e", &format!("set volume output volume {}", v.min(100))]).output();
+        }
+        let out = std::process::Command::new("osascript").args(["-e", "set s to get volume settings", "-e", "(output volume of s as text) & \",\" & (output muted of s as text)"]).output();
+        let text = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let mut parts = text.split(',');
+        let volume = parts.next().and_then(|v| v.trim().parse::<u8>().ok());
+        let muted = parts.next().map(|m| m.trim() == "true").unwrap_or(false);
+        return json!({ "volume": volume, "muted": muted });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = set;
+        Value::Null
+    }
+}
+
+// Floating (above other apps, on every Space, no Dock icon) or Regular (a normal window with a
+// Dock or taskbar icon that other windows can cover)
+#[tauri::command]
+fn set_window_mode(app: AppHandle, regular: bool) {
+    let Some(w) = board(&app) else { return };
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_nspanel::{CollectionBehavior, ManagerExt, PanelLevel};
+        let _ = app.set_activation_policy(if regular { tauri::ActivationPolicy::Regular } else { tauri::ActivationPolicy::Accessory });
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Ok(panel) = app2.get_webview_panel("board") {
+                if regular {
+                    panel.set_level(PanelLevel::Normal.value());
+                    panel.set_collection_behavior(CollectionBehavior::new().value());
+                } else {
+                    panel.set_level(PanelLevel::Floating.value());
+                    panel.set_collection_behavior(CollectionBehavior::new().can_join_all_spaces().full_screen_auxiliary().stationary().value());
+                }
+                panel.order_front_regardless();
+            }
+        });
+        let _ = w;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = w.set_always_on_top(!regular);
+        let _ = w.set_skip_taskbar(!regular);
+        let _ = w.set_visible_on_all_workspaces(!regular);
+    }
+}
+
 // This app's process id, so the page can tell its own window being in front from another app's
 #[tauri::command]
 fn own_pid() -> u32 {
@@ -355,7 +535,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![read_state, write_shared, set_tray, show_board, set_shortcut, front_app, own_pid, log, show_window, set_toasts_visible, ask_accessibility, focus, open_session, read_crash])
+        .invoke_handler(tauri::generate_handler![read_state, write_shared, set_tray, show_board, set_shortcut, front_app, own_pid, log, show_window, set_toasts_visible, ask_accessibility, focus, open_session, read_crash, take_keyboard, legacy_settings, list_sounds, read_sound, add_sound, remove_sound, mac_volume, set_window_mode])
         .setup(|app| {
 
             let show = MenuItem::with_id(app, "toggle", "Show or hide the window", true, None::<&str>)?;
@@ -372,6 +552,14 @@ fn main() {
                 show_quietly(&w);
             }
             set_toasts_visible(app.handle().clone(), false);
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                platform::taps::install(move || {
+                    let h = handle.clone();
+                    let _ = handle.run_on_main_thread(move || toggle(&h));
+                });
+            }
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().cloned().expect("the bundle has an icon"))
                 .icon_as_template(false)
@@ -397,6 +585,16 @@ fn main() {
                 .build(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("Session Board couldn't start");
+        .build(tauri::generate_context!())
+        .expect("Session Board couldn't start")
+        .run(|app, event| {
+            // macOS: clicking the Dock icon (Regular window) brings the board back
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(w) = board(app) {
+                    show_quietly(&w);
+                }
+            }
+            let _ = (app, event);
+        });
 }

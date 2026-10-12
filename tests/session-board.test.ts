@@ -1146,3 +1146,30 @@ test('on Linux the AppImage is downloaded, checked, made runnable and started on
   expect(runs).toContainEqual(['chmod', '+x', dir + '/Session-Board.AppImage'])
   expect(runs.find((r) => r[0] === 'sh' && String(r[2]).includes('nohup'))!.at(-1)).toBe(dir + '/Session-Board.AppImage')
 })
+
+test('on a Mac, once a release has a Mac build, it is downloaded, checked, put in place, signed with your certificate and opened', async ($, on) => {
+  const runs: string[][] = []
+  const writes: string[][] = []
+  const release = JSON.stringify({ version: '0.3.0', assets: { 'macos-universal': { file: 'Session-Board-macos.tar.gz', sha256: SUM } } })
+  const identity = 'A'.repeat(40)
+  stubEngine(on, {
+    runs, writes, files: { '/app/release.json': release }, exists: () => false,
+    run: (argv) => {
+      if (argv[0] === 'shasum') return { exitCode: 0, stdout: SUM + '  file\n' }
+      if (argv[0] === 'security') return { exitCode: 0, stdout: `  1) ${identity} "Apple Development: K (TEAM)"\n     1 valid identities found\n` }
+      return undefined
+    },
+  })
+  await start($)
+  await waitFor(() => runs.some((r) => r[0] === 'open'))
+  const tmp = DATA + '/Session-Board-macos.tar.gz.download'
+  expect(runs.find((r) => r[0] === 'curl')!.at(-1)).toBe('https://github.com/KiranPothana/session-board/releases/download/v0.3.0/Session-Board-macos.tar.gz')
+  expect(runs).toContainEqual(['pkill', '-x', 'SessionBoard'])
+  expect(runs).toContainEqual(['rm', '-rf', APP])
+  expect(runs).toContainEqual(['tar', '-xzf', tmp, '-C', HOME + '/Applications'])
+  expect(runs).toContainEqual(['codesign', '--force', '--deep', '-s', identity, APP])
+  expect(writes).toContainEqual([DATA + '/app-version.txt', '0.3.0'])
+  expect(runs.find((r) => r[0] === 'open')).toEqual(['open', '-g', APP])
+  // No Swift build
+  expect(runs.some((r) => r[0] === 'sh' && String(r[1]).endsWith('build.sh'))).toBe(false)
+})

@@ -1,5 +1,5 @@
 # Session Board's window app (app/): tested on every OS on each push, and on a version tag built
-# for Windows and Linux and attached to that tag's release with its checksums. app/release.json,
+# for macOS, Windows and Linux and attached to that tag's release with its checksums. app/release.json,
 # which the plugin checks each download against, is then filled in from SHA256SUMS.
 name: Window app
 
@@ -33,7 +33,7 @@ jobs:
       - name: Linux libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libx11-dev libxcb1-dev
-      - run: node --test ui/model.test.mjs
+      - run: node --test ui/model.test.mjs ui/shortcut.test.mjs
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
   build:
@@ -43,6 +43,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: macos-latest
+            asset: Session-Board-macos.tar.gz
           - os: windows-latest
             asset: session-board.exe
           - os: ubuntu-22.04
@@ -61,6 +63,14 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libx11-dev libxcb1-dev file
       - run: npm ci
+      - name: "Build (macOS, one app for Apple Silicon and Intel, signed ad hoc)"
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          npx tauri build --target universal-apple-darwin --bundles app
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Session Board.app"
+          codesign --force --deep -s - "$APP"
+          tar -czf "../${{ matrix.asset }}" -C "$(dirname "$APP")" "Session Board.app"
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: |

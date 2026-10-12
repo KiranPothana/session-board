@@ -152,3 +152,25 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .chip-btn { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 5px; background: var(--seg-track); color: var(--soft); }
 .chip-btn.on { background: var(--text); color: var(--cell); }
 .switch { cursor: pointer; }
+
+.recorder { font: 700 12px var(--mono); color: var(--text); padding: 4px 10px; border-radius: 6px; background: var(--seg-track); box-shadow: inset 0 0 0 1px var(--key-border); white-space: nowrap; flex: none; }
+.recorder.rec { box-shadow: inset 0 0 0 1.5px var(--text); }
+.recorder.clash { box-shadow: inset 0 0 0 1px var(--amber); }
+.quiet-btn.plain { background: none; color: var(--muted); }
+.warn { font-size: 11px; color: var(--amber-text); }
+
+.chip-group { display: flex; flex-direction: column; gap: 7px; padding-left: 20px; }
+.chip-group .chips { padding-left: 0; }
+.chip-wrap { position: relative; display: inline-flex; }
+.chip-x { position: absolute; right: -5px; top: -5px; width: 14px; height: 14px; border-radius: 7px; background: var(--text); color: var(--cell); font-size: 8px; font-weight: 700; display: none; }
+.chip-wrap:hover .chip-x { display: block; }
+.chip-btn.add { background: none; box-shadow: inset 0 0 0 1px var(--chip-border); border-style: dashed; }
+.vol-note { font-size: 11px; color: var(--muted); margin: -4px 0 8px; }
+.sounds .chips + .chip-group, .sound-row + .chip-group { margin-top: 2px; }
+
+button.tile { cursor: pointer; }
+.picker { margin: 10px 0 4px; padding: 12px; background: var(--sunken); border-radius: 8px; display: flex; flex-direction: column; gap: 10px; }
+.picker b { font-size: 12px; font-weight: 600; }
+.swatches { display: grid; grid-template-columns: repeat(6, 24px); gap: 8px; }
+.swatch { width: 24px; height: 24px; border-radius: 4px; }
+.swatch.on { box-shadow: 0 0 0 2px var(--sunken), 0 0 0 4px var(--text); }

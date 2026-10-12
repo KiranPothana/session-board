@@ -471,6 +471,122 @@ pub mod mac {
     }
 }
 
+// ---- macOS: a right-hand ⌥, ⌘ or ⌃ tapped on its own as the shortcut, as the SwiftUI app had.
+// Pressed with no other modifier, let go within half a second, with no key, click or other
+// modifier in between. Other apps' events reach the app only with the Accessibility permission.
+
+#[cfg(target_os = "macos")]
+pub mod taps {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags as F, NSEventType};
+    use std::ptr::NonNull;
+    use std::sync::{Mutex, OnceLock};
+
+    // A right-hand modifier's key code, its own bit in the event's flags (so the left one held
+    // doesn't count) and the modifier it is
+    const TAPS: [(u16, usize, F); 3] = [(61, 0x40, F::Option), (54, 0x10, F::Command), (62, 0x2000, F::Control)];
+
+    struct Watch {
+        want: Option<u16>,
+        down: Option<f64>,
+    }
+
+    static WATCH: Mutex<Watch> = Mutex::new(Watch { want: None, down: None });
+    static ON_TAP: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+    fn feed(e: &NSEvent) -> bool {
+        let mut w = WATCH.lock().unwrap();
+        let Some(want) = w.want else { return false };
+        let Some((_, bit, flag)) = TAPS.iter().find(|t| t.0 == want) else { return false };
+        if e.r#type() != NSEventType::FlagsChanged || e.keyCode() != want {
+            w.down = None;
+            return false;
+        }
+        let flags = e.modifierFlags();
+        if flags.0 & bit != 0 {
+            let held = flags & (F::Command | F::Option | F::Control | F::Shift);
+            w.down = if held == *flag { Some(e.timestamp()) } else { None };
+            return false;
+        }
+        matches!(w.down.take(), Some(at) if e.timestamp() - at < 0.5)
+    }
+
+    fn handle(e: &NSEvent) {
+        if feed(e) {
+            if let Some(f) = ON_TAP.get() {
+                f();
+            }
+        }
+    }
+
+    // Watches for taps from now on (on the main thread, once); `on_tap` runs on each
+    pub fn install(on_tap: impl Fn() + Send + Sync + 'static) {
+        if ON_TAP.set(Box::new(on_tap)).is_err() {
+            return;
+        }
+        let mask = NSEventMask::FlagsChanged | NSEventMask::KeyDown | NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown;
+        let global = RcBlock::new(|e: NonNull<NSEvent>| handle(unsafe { e.as_ref() }));
+        let local = RcBlock::new(|e: NonNull<NSEvent>| -> *mut NSEvent {
+            handle(unsafe { e.as_ref() });
+            e.as_ptr()
+        });
+        // The monitors live as long as the app
+        std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &global));
+        std::mem::forget(unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &local) });
+    }
+
+    // The right-hand modifier to watch (its key code), or none
+    pub fn set(code: Option<u16>) {
+        let mut w = WATCH.lock().unwrap();
+        w.want = code.filter(|c| TAPS.iter().any(|t| t.0 == *c));
+        w.down = None;
+    }
+}
+
+// macOS: the SwiftUI app's settings (it shares this app's id), so they carry over once. Each key on
+// its own: some of the app's other values (window frames, dates) have no JSON form.
+#[cfg(target_os = "macos")]
+pub fn legacy_settings() -> Value {
+    use std::io::Write;
+    const KEYS: [&str; 21] = [
+        "shortcutKeyCode", "shortcutMods", "shortcutKey", "theme", "regularWindow", "hideWhenAway", "terminalsCount", "soundsOn",
+        "collapsed", "askedAccessibility", "sessionColors", "autoColors", "dismissedAt", "removedItems", "dismissed", "soundChoices",
+        "alertVolume", "soundNeedsYou", "soundYourTurn", "soundDone", "crashSeenAt",
+    ];
+    let Ok(out) = Command::new("defaults").args(["export", "io.github.kiranpothana.session-board", "-"]).output() else { return Value::Null };
+    if !out.status.success() {
+        return Value::Null;
+    }
+    // plutil gives arrays and dictionaries as JSON, and a single value only as raw text
+    let extract = |key: &str, format: &str| -> Option<String> {
+        let mut child = Command::new("plutil")
+            .args(["-extract", key, format, "-o", "-", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        child.stdin.take()?.write_all(&out.stdout).ok()?;
+        let o = child.wait_with_output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let mut found = Map::new();
+    for key in KEYS {
+        let value = match extract(key, "json") {
+            Some(json) => serde_json::from_str(&json).ok(),
+            None => extract(key, "raw").map(|raw| match raw.as_str() {
+                "true" => Value::Bool(true),
+                "false" => Value::Bool(false),
+                _ => raw.parse::<f64>().map(|n| json!(n)).unwrap_or(Value::String(raw)),
+            }),
+        };
+        if let Some(v) = value {
+            found.insert(key.to_string(), v);
+        }
+    }
+    Value::Object(found)
+}
+
 // ---- Windows: bring a process's top-level window forward
 
 #[cfg(windows)]

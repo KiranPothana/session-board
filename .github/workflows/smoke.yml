@@ -1,4 +1,4 @@
-# Starts a release's window app on Windows and Linux with a sample session in place, and checks
+# Starts a release's window app on macOS, Windows and Linux with a sample session in place, and checks
 # it is still running 20 seconds later without having crashed (no crash.txt). Run it by hand for a
 # tag after the release's assets are up.
 name: Smoke test a release
@@ -19,6 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: macos-latest
+            asset: Session-Board-macos.tar.gz
           - os: windows-latest
             asset: session-board.exe
           - os: ubuntu-22.04
@@ -50,6 +52,17 @@ jobs:
           sleep 20
           cat app.log
           pgrep -f "${{ matrix.asset }}" > /dev/null || { echo "the app is not running"; exit 1; }
+          test ! -f "$SESSION_BOARD_SHARED_DIR/crash.txt" || { cat "$SESSION_BOARD_SHARED_DIR/crash.txt"; exit 1; }
+          echo "running after 20 s, no crash"
+      - name: Run it (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          tar -xzf "${{ matrix.asset }}"
+          export SESSION_BOARD_SHARED_DIR="$RUNNER_TEMP/shared"
+          "./Session Board.app/Contents/MacOS/session-board" > app.log 2>&1 &
+          sleep 20
+          cat app.log
+          pgrep -f "Session Board.app/Contents/MacOS/session-board" > /dev/null || { echo "the app is not running"; exit 1; }
           test ! -f "$SESSION_BOARD_SHARED_DIR/crash.txt" || { cat "$SESSION_BOARD_SHARED_DIR/crash.txt"; exit 1; }
           echo "running after 20 s, no crash"
       - name: Run it (Windows)
