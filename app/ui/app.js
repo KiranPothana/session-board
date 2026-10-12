@@ -7,7 +7,7 @@ import { DEFAULT_SHORTCUT, label as shortcutLabel, Recorder, clash, fromLegacy }
 
 const tauri = window.__TAURI__
 const invoke = (cmd, args) => (tauri ? tauri.core.invoke(cmd, args) : Promise.resolve(null))
-const VERSION = '0.3.0'
+const VERSION = '0.3.1'
 // Errors go to the app's log, since a webview's console can't be seen
 window.addEventListener('error', (e) => invoke('log', { msg: `board: ${e.message} at ${e.filename}:${e.lineno}` }))
 window.addEventListener('unhandledrejection', (e) => invoke('log', { msg: `board: ${e.reason?.message ?? e.reason}` }))
@@ -68,6 +68,11 @@ async function read() {
     invoke('show_board')
   }
   savePrefs()
+  // The old Mac app's settings, once we know which system this is and whether it's a test run
+  if (!ui.importTried) {
+    ui.importTried = true
+    importLegacy().catch(() => {})
+  }
   noticeAttention(rows, snap.now)
   // A test popup (the test-toast file): that kind, for the first session you aren't viewing
   if (snap.testToast) {
@@ -451,11 +456,13 @@ document.addEventListener('keydown', onRecordKey, true)
 document.addEventListener('keyup', onRecordKey, true)
 
 // macOS: the SwiftUI app's settings carry over, once
+// (Test runs share this app's id, and so its stored settings: they never import, and only an
+// import that found the old app's settings counts as done.)
 async function importLegacy() {
-  if (prefs.imported || state.platform !== 'macos') return
-  prefs.imported = true
+  if (prefs.importedSwiftSettings || state.platform !== 'macos' || ui.testing) return
   const d = await invoke('legacy_settings').catch(() => null)
-  if (d && typeof d === 'object') {
+  if (d && typeof d === 'object' && Object.keys(d).length) {
+    prefs.importedSwiftSettings = true
     if (d.shortcutKey != null && d.shortcutKeyCode != null) prefs.shortcut = fromLegacy(Number(d.shortcutKeyCode), Number(d.shortcutMods ?? 0), String(d.shortcutKey))
     for (const k of ['theme', 'regularWindow', 'hideWhenAway', 'terminalsCount', 'soundsOn', 'collapsed', 'askedAccessibility']) if (d[k] !== undefined) prefs[k] = d[k]
     for (const k of ['sessionColors', 'autoColors', 'dismissedAt', 'removedItems']) if (d[k] && typeof d[k] === 'object') prefs[k] = d[k]
@@ -469,7 +476,7 @@ async function importLegacy() {
     savePrefs()
     render()
     fitCollapsed(true).catch(() => {})
-  } else savePrefs()
+  }
 }
 
 function soundsSection() {
@@ -717,7 +724,6 @@ if (tauri) {
   setInterval(() => followFrontApp().catch(() => {}), 500)
   setInterval(() => followFocus().catch(() => {}), 750)
   setTimeout(() => checkCrash().catch(() => {}), 1500)
-  setTimeout(() => importLegacy().catch(() => {}), 1000)
   // The window kind and size you left it with
   setTimeout(() => { invoke('set_window_mode', { regular: !!prefs.regularWindow }); fitCollapsed() }, 300)
   loadSounds().then(render)
