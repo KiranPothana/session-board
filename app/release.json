@@ -1,13 +1,13 @@
 {
-  "version": "0.3.1",
+  "version": "0.3.3",
   "assets": {
     "windows-x64": {
       "file": "session-board.exe",
-      "sha256": "08b2ccd524f3452a2a6c85abbd5c64722a1d6c1614c7aa59f36de0e6790d01b2"
+      "sha256": "ca8625c069bbcfe171484116720318295a063e226cb4bfeba43e610c1c15176f"
     },
     "linux-x64": {
       "file": "Session-Board-x86_64.AppImage",
-      "sha256": "27328c26b9a32809a21f14947d183058d9017f8ecedbf992e1bfa64c7c4cb9d9"
+      "sha256": "455a3565c7d3f14d64260c6baced6ab63d516de9823b5c73b6f58f338e3c4a63"
     }
   }
 }
