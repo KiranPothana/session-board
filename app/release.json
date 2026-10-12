@@ -1,10 +1,6 @@
 {
   "version": "0.3.1",
   "assets": {
-    "macos-universal": {
-      "file": "Session-Board-macos.tar.gz",
-      "sha256": "a855d91e40e9a3daaf3aec57166ed625dcf0cbe5d06773df63e53f3b0d011ed7"
-    },
     "windows-x64": {
       "file": "session-board.exe",
       "sha256": "08b2ccd524f3452a2a6c85abbd5c64722a1d6c1614c7aa59f36de0e6790d01b2"

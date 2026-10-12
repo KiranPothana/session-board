@@ -29,14 +29,14 @@ Also:
 - Control-Option-S shows or hides the window.
 - Optional sounds; light and dark.
 
-Needs: Claude Code 2.1.287+, and macOS 12+, Windows 10/11, or a 64-bit Linux desktop.
+Needs: Claude Code 2.1.287+, and macOS 15+ with Apple's command-line tools (`xcode-select --install`), Windows 10/11, or a 64-bit Linux desktop.
 
 Install (run these for me):
 ```sh
 claude plugin marketplace add KiranPothana/session-board
 claude plugin install session-board@session-board
 ```
-Then I start a new Claude Code session, or type /session-board in one. The first time, it downloads the window app, checks its checksum and opens it. Chats already running show up too.
+Then I start a new Claude Code session, or type /session-board in one. The first time, it gets the window app ready (on a Mac it builds it in under a minute; on Windows and Linux it downloads it and checks its checksum) and opens it. Chats already running show up too.
 
 Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my computer. Bug reports are sent only when I say "report" (or click Report), and never include anything from my chats.
 
@@ -53,7 +53,7 @@ Something wrong or an idea? Tell Claude in any session and say "report", or open
 
 One floating window on your computer (Mac, Windows or Linux) that lists every Claude Code session you have running (in the terminal, over Remote Control, and in Claude Desktop) with what each one is working on, what is still to do, and which ones need you.
 
-It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) plus a small window app the plugin downloads, checks against its checksum and opens the first time you use it, on Mac, Windows and Linux alike.
+It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) plus a small window app: on a Mac a native one the plugin builds the first time you use it, on Windows and Linux one the plugin downloads (and checks) the first time.
 
 ## What you get
 
@@ -85,7 +85,7 @@ You don't need Claude Desktop. With terminal sessions only, the window works the
 ## Requirements
 
 - **Claude Code 2.1.287 or later**, the first version with mods. It's tested with 2.1.296, and the mods API can still change between Claude Code releases.
-- **Mac:** macOS 12 or later (tested on macOS 27). One app for Apple Silicon and Intel.
+- **Mac:** macOS 15 or later, and Apple's command-line tools to build the window app (`xcode-select --install`). It's tested with Swift 6.4 on macOS 27.
 - **Windows:** Windows 10 or 11 (64-bit), with the WebView2 runtime that comes with them. *New in 0.2.0: tested on GitHub's Windows build machines, not yet by people.*
 - **Linux:** a 64-bit desktop with X11, or Wayland with the limits below. The app is an AppImage. *New in 0.2.0, as Windows.*
 
@@ -102,7 +102,7 @@ are the same; some things depend on what the system lets an app see:
 | Click a name to go to a terminal session | its tab (Terminal, iTerm2), else its app | its app | its app (with `xdotool`) | no |
 | Hide when you switch away from Claude | yes | yes | yes | no |
 | Your own shortcut and your own sounds | yes | yes | yes | sounds yes; no global shortcut |
-| A right-hand ⌥, ⌘ or ⌃ tapped on its own as the shortcut | yes | not yet | not yet | no |
+| A right-hand ⌥, ⌘ or ⌃ tapped on its own as the shortcut | yes | no | no | no |
 
 ## Install
 
@@ -113,8 +113,8 @@ claude plugin install session-board@session-board
 
 Then start a new Claude Code session, or type `/session-board` in one.
 
-- The first time (and after an update that changes it), the plugin downloads the window app from this repo's release for its version, checks it against the SHA-256 in `app/release.json` (part of the plugin; a download that doesn't match is thrown away), and starts it. Mac: `~/Applications/Session Board.app`, signed with your Apple Development certificate when you have one, so macOS keeps its Accessibility permission across updates. Windows: `%LOCALAPPDATA%\Programs\Session Board`. Linux: `~/.local/share/session-board/app`.
-- Coming from an earlier version on a Mac: your settings, shortcut and colours carry over from the old app, and macOS asks once more for the Accessibility permission (it's a new app to macOS).
+- **Mac:** the first time, the plugin builds the window app into `~/Applications/Session Board.app` (under a minute) and opens it. It builds again only when an update changes the app's source.
+- **Windows and Linux:** the first time, the plugin downloads the window app from this repo's release for its version, checks it against the SHA-256 in `app/release.json` (part of the plugin; a download that doesn't match is thrown away), and starts it. Windows: `%LOCALAPPDATA%\Programs\Session Board`. Linux: `~/.local/share/session-board/app`.
 - Sessions that were already running show up too, with no restart. Once one session runs the plugin, it reads the others' saved conversations every 30 seconds.
 
 To update: `claude plugin update session-board@session-board`.
@@ -163,7 +163,7 @@ That's a few small calls per turn, per session, billed to your Claude account li
   - It's updated from the session's own events: prompts, turns, tool calls and permission prompts.
   - Sessions that started before the plugin loaded get a record built from their saved conversations.
   - `claude -p` runs and SDK jobs are skipped.
-- **The window** (`app/`, a [Tauri](https://tauri.app) app: a small Rust side in `app/src-tauri` and the board as a web page in `app/ui`) joins those records with Claude Code's session registry every 2 seconds. The release workflow builds it for each system. The earlier native Mac app is in `board/` (`board/main.swift`); the plugin builds it only when a release has no Mac build.
+- **The window** joins those records with Claude Code's session registry every 2 seconds. On a Mac it's the native app in `board/` (`board/main.swift`, built by `board/build.sh`). On Windows and Linux it's `app/`, a [Tauri](https://tauri.app) app (a small Rust side in `app/src-tauri`, the board as a web page in `app/ui`) that the release workflow builds.
 - **A shared folder** connects the two: `~/Library/Application Support/session-board` on a Mac, `%APPDATA%\session-board` on Windows, `~/.local/share/session-board` on Linux. It holds:
   - the settings;
   - the bullets you removed;
