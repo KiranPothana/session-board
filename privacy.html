@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Session Board</title>
+<meta name="description" content="What Session Board, the Claude Code mod, reads, keeps and sends, and where.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icon.png">
+<link rel="canonical" href="https://sessionboard.dev/privacy">
+<style>
+  :root { --bg: #0B0B0C; --text: #F2F2F3; --soft: #B4B5B9; --muted: #8D8E91; --rule: #26272B; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 72px; }
+  a { color: var(--text); }
+  .back { color: var(--muted); font-size: 14px; text-decoration: none; }
+  h1 { font-size: 34px; line-height: 1.15; letter-spacing: -0.02em; margin: 24px 0 8px; }
+  h2 { font-size: 19px; margin: 36px 0 8px; padding-top: 24px; border-top: 1px solid var(--rule); }
+  p, li { color: var(--soft); }
+  ul { padding-left: 20px; }
+  .date { color: var(--muted); font-size: 14px; }
+  code { font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="./">← Session Board</a>
+<h1>Privacy</h1>
+<p class="date">Last updated 12 October 2026</p>
+<p>Session Board is a free, open-source Claude Code mod and window app by Kiran Pothana. It runs on your computer. This page says what it reads, what it keeps, and what it sends, and where. Its code is public: <a href="https://github.com/KiranPothana/session-board">github.com/KiranPothana/session-board</a>.</p>
+
+<h2>What it reads</h2>
+<p>Files Claude Code already writes on your computer: its list of running sessions, and the saved conversations of those sessions. It reads them to show what each session is doing.</p>
+
+<h2>What it keeps, and where</h2>
+<ul>
+<li>A short record for each session (its status, latest request, task list and summary), in Claude Code's plugin store on your computer. It's deleted when the session ends.</li>
+<li>Your window settings, the lines you removed, and your own sounds, in Session Board's folder on your computer.</li>
+</ul>
+<p>Nothing is kept anywhere else, apart from bug reports you choose to send (below).</p>
+
+<h2>What it sends, and where</h2>
+<ul>
+<li><strong>Summaries:</strong> the last few requests and replies of a session go to Claude through Claude Code's own model call, on your Claude account, the same way the session itself talks to Claude. Anthropic's terms and privacy policy apply to that. You can turn summaries off in Settings.</li>
+<li><strong>Bug reports, only when you ask</strong> (you say "report", or click Report or a Feedback button): your description, the versions of Session Board, Claude Code and your system, the window's settings, how many sessions are on the board, Session Board's error messages and a crash's stack trace. Your home folder and user name are removed, and nothing from your chats is included. With the GitHub CLI signed in, the report becomes a public issue on the GitHub repo, under your account. Otherwise it goes to Session Board's report inbox, a Cloudflare Worker that files it as an issue in a private GitHub repo only the maintainer can read; the inbox itself keeps nothing.</li>
+<li><strong>Downloads (Windows and Linux):</strong> the window app is downloaded from the GitHub repo's releases, which GitHub sees as a download.</li>
+</ul>
+<p>There are no analytics, no tracking and no ads, in the app or on this website.</p>
+
+<h2>How long reports are kept</h2>
+<p>A report stays as a GitHub issue until it's deleted. To have one deleted, ask on <a href="https://github.com/KiranPothana/session-board/issues">GitHub issues</a> (for a private report, give its report number) and it will be.</p>
+
+<h2>This website</h2>
+<p>sessionboard.dev is a static page hosted on GitHub Pages. It sets no cookies and loads nothing from other services. GitHub may log visits as part of hosting it; see GitHub's privacy statement.</p>
+
+<h2>Children</h2>
+<p>Session Board is a developer tool, not meant for anyone under 18.</p>
+
+<h2>Changes and contact</h2>
+<p>Changes to this page are made in the public repo, so its history shows every one. Questions: <a href="https://github.com/KiranPothana/session-board/issues">GitHub issues</a>.</p>
+</main>
+</body>
+</html>
