@@ -122,3 +122,60 @@ test('ink on a tile', () => {
   assert.equal(inkFor('#F5C542'), '#0B0B0C')
   assert.equal(inkFor('#1F5C96'), '#FFFFFF')
 })
+
+import { Attention, soundFor, NEEDS_YOU, YOUR_TURN, DONE } from './model.js'
+
+const r = (id, status, extra = {}) => ({ id, status, items: [], agentsRunning: 0, workflowsRunning: 0, justDid: '', ask: '', ...extra })
+
+test('a status counts after two reads; the first one seen says nothing', () => {
+  const a = new Attention()
+  assert.deepEqual(a.step([r('a', 'needs-you')]), [])
+  assert.deepEqual(a.step([r('a', 'needs-you')]), [])
+  a.step([r('a', 'working')])
+  assert.deepEqual(a.step([r('a', 'working')]), [])
+  assert.deepEqual(a.step([r('a', 'needs-you')]), [])
+  assert.deepEqual(a.step([r('a', 'needs-you')]).map((e) => e.kind), [NEEDS_YOU])
+})
+
+test('a blip of one read is ignored', () => {
+  const a = new Attention()
+  a.step([r('a', 'working')]); a.step([r('a', 'working')])
+  a.step([r('a', 'needs-you')])
+  assert.deepEqual(a.step([r('a', 'working')]), [])
+  assert.deepEqual(a.step([r('a', 'working')]), [])
+})
+
+test('your turn when an ended turn leaves something waiting on you, within 90 s', () => {
+  const a = new Attention(); const t = 1_000_000
+  a.step([r('a', 'working')], { now: t }); a.step([r('a', 'working')], { now: t })
+  a.step([r('a', 'idle')], { now: t + 2000 })
+  assert.deepEqual(a.step([r('a', 'idle')], { now: t + 4000 }), [])
+  const waiting = r('a', 'idle', { items: [{ text: 'Review it', waitsOnYou: true }] })
+  assert.deepEqual(a.step([waiting], { now: t + 10_000 }).map((e) => e.kind), [YOUR_TURN])
+  assert.deepEqual(a.step([waiting], { now: t + 12_000 }), [])
+})
+
+test('done 15 s after the turn ends, once nothing is still running', () => {
+  const a = new Attention(); const t = 1_000_000
+  a.step([r('a', 'working')], { now: t }); a.step([r('a', 'working')], { now: t })
+  a.step([r('a', 'idle')], { now: t }); a.step([r('a', 'idle')], { now: t })
+  assert.deepEqual(a.step([r('a', 'idle')], { now: t + 10_000 }), [])
+  assert.deepEqual(a.step([r('a', 'idle')], { now: t + 20_000, jobs: { a: [{ label: 'tests', minutes: 1 }] } }), [])
+  assert.deepEqual(a.step([r('a', 'idle')], { now: t + 30_000 }).map((e) => e.kind), [DONE])
+})
+
+test('never for the session you are viewing', () => {
+  const a = new Attention()
+  a.step([r('a', 'working')]); a.step([r('a', 'working')])
+  a.step([r('a', 'needs-you')], { focusedId: 'a' })
+  assert.deepEqual(a.step([r('a', 'needs-you')], { focusedId: 'a' }), [])
+})
+
+test('one sound at a time: the most urgent, at most every 8 s, only switched-on moments', () => {
+  const ev = [{ kind: DONE }, { kind: NEEDS_YOU }]
+  assert.equal(soundFor(ev, { moments: [true, true, true] }), NEEDS_YOU)
+  assert.equal(soundFor(ev, { moments: [false, true, true] }), DONE)
+  assert.equal(soundFor(ev, { moments: [true, true, true], lastSoundAt: 1000, now: 5000 }), null)
+  assert.equal(soundFor(ev, { soundsOn: false }), null)
+  assert.equal(soundFor([{ kind: DONE }]), null)
+})

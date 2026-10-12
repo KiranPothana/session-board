@@ -1,26 +1,44 @@
 // The board page: reads what the window side hands it every 2 seconds, builds the rows with
 // model.js and draws them. In a plain browser (no Tauri) it draws sample sessions instead, which is
 // how its layout is checked with screenshots.
-import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, sessionText, assignColors, inkFor, ago, SWATCHES } from './model.js'
+import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, sessionText, assignColors, inkFor, ago, SWATCHES, isQuiet, Attention, soundFor, popupDetail, NEEDS_YOU, DONE } from './model.js'
 import { sampleState } from './sample.js'
 
 const tauri = window.__TAURI__
 const invoke = (cmd, args) => (tauri ? tauri.core.invoke(cmd, args) : Promise.resolve(null))
 const VERSION = '0.2.0'
+// Errors go to the app's log, since a webview's console can't be seen
+window.addEventListener('error', (e) => invoke('log', { msg: `board: ${e.message} at ${e.filename}:${e.lineno}` }))
+window.addEventListener('unhandledrejection', (e) => invoke('log', { msg: `board: ${e.reason?.message ?? e.reason}` }))
 const REPO = 'https://github.com/KiranPothana/session-board'
 const DEFAULT_SHORTCUT = 'Ctrl+Alt+S'
 const UNDO_MS = 6000
+// The sounds every system has, bundled with the app: id -> [name, file]
+const SOUNDS = {
+  'board:needs-you': ['Mallet', 'sounds/needs-you.wav'], 'board:your-turn': ['Soft chime', 'sounds/your-turn.wav'], 'board:done': ['Bell', 'sounds/done.wav'],
+  'kenney:confirmation_001': ['Confirm 1', 'sounds/kenney-confirmation_001.wav'], 'kenney:confirmation_002': ['Confirm 2', 'sounds/kenney-confirmation_002.wav'],
+  'kenney:confirmation_003': ['Confirm 3', 'sounds/kenney-confirmation_003.wav'], 'kenney:confirmation_004': ['Confirm 4', 'sounds/kenney-confirmation_004.wav'],
+  'kenney:question_001': ['Question 1', 'sounds/kenney-question_001.wav'], 'kenney:question_002': ['Question 2', 'sounds/kenney-question_002.wav'],
+  'kenney:question_003': ['Question 3', 'sounds/kenney-question_003.wav'], 'kenney:glass_001': ['Glass tap', 'sounds/kenney-glass_001.wav'],
+  'kenney:maximize_006': ['Rise', 'sounds/kenney-maximize_006.wav'], 'kenney:bong_001': ['Bong', 'sounds/kenney-bong_001.wav'], 'kenney:pluck_002': ['Pluck', 'sounds/kenney-pluck_002.wav'],
+}
+const DEFAULT_SOUNDS = ['board:needs-you', 'board:your-turn', 'board:done']
+const MOMENTS = [['Needs you', 'A permission prompt or a question', '--amber'], ['Your turn', 'A turn ends with something for you', '--amber'], ['Done', 'Finished, with nothing left running', '--idle']]
+// Apps that count as Claude for "hide when you switch away", by executable name, lowercased
+const CLAUDE_APPS = ['claude', 'claude.exe']
+const TERMINALS = ['terminal', 'iterm2', 'ghostty', 'warp', 'wezterm', 'wezterm-gui', 'kitty', 'alacritty', 'code', 'cursor', 'zed', 'windowsterminal', 'windowsterminal.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe', 'code.exe', 'cursor.exe', 'wezterm-gui.exe', 'alacritty.exe', 'warp.exe', 'gnome-terminal-server', 'konsole', 'xterm', 'tilix', 'foot']
 
 // ---- What the window keeps between launches (the macOS app's UserDefaults)
 const PREFS_KEY = 'session-board-prefs'
 const prefs = Object.assign(
-  { collapsed: false, dismissed: [], dismissedAt: {}, sessionColors: {}, autoColors: {}, theme: null, regularWindow: false, hideWhenAway: true, terminalsCount: true, soundsOn: true, removedItems: {}, handledShowRequest: 0, shortcut: DEFAULT_SHORTCUT, userHidden: false },
+  { collapsed: false, dismissed: [], dismissedAt: {}, sessionColors: {}, autoColors: {}, theme: null, regularWindow: false, hideWhenAway: true, terminalsCount: true, soundsOn: true, removedItems: {}, handledShowRequest: 0, shortcut: DEFAULT_SHORTCUT, userHidden: false, soundMoments: [true, true, false], soundChoices: DEFAULT_SOUNDS, alertVolume: 0.5 },
   (() => { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) ?? {} } catch { return {} } })(),
 )
 const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch {} }
 
 // ---- What the page is showing
-const ui = { settings: false, showDismissed: false, openRemoved: new Set(), dismissAsk: null, undo: null, focusedId: null }
+const ui = { settings: false, showDismissed: false, openRemoved: new Set(), dismissAsk: null, undo: null, focusedId: null, openChooser: null, toastCount: 0, lastSoundAt: 0, claudeTheme: null, ownPid: null, away: false }
+const attention = new Attention()
 let state = { rows: [], shared: { summaries: true, projectNames: true, renameSessions: false }, platform: 'browser' }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -30,6 +48,8 @@ async function read() {
   const snap = tauri ? await invoke('read_state') : sampleState(Date.now(), params)
   const rows = buildRows({ store: snap.store, registry: snap.registry, registryReadable: snap.registryReadable !== false, projects: snap.projects ?? {}, now: snap.now })
   state = { rows, shared: { summaries: true, projectNames: true, renameSessions: false, ...snap.settings }, platform: snap.platform, jobs: snap.jobs ?? {} }
+  ui.testing = !!snap.testing
+  ui.claudeTheme = snap.claudeTheme === 'dark' || snap.claudeTheme === 'light' ? snap.claudeTheme : null
   prefs.dismissed = autoRestore(rows, prefs.dismissed, prefs.dismissedAt, snap.now)
   // Forget sessions that are gone, but never on an empty read
   if (rows.length) {
@@ -44,13 +64,106 @@ async function read() {
     invoke('show_board')
   }
   savePrefs()
+  noticeAttention(rows, snap.now)
+  // A test popup (the test-toast file): that kind, for the first session you aren't viewing
+  if (snap.testToast) {
+    const row = partition(rows, prefs.dismissed).shown.find((r) => r.id !== ui.focusedId)
+    if (row) noticeAttention(rows, snap.now, [{ kind: Number(snap.testToast) || 0, row }])
+  }
   if (params.has('viewing')) ui.focusedId = partition(rows, prefs.dismissed).shown[Number(params.get('viewing')) - 1]?.id ?? null
   render()
 }
 
-// ---- Theme: your pick, else the system's
+// ---- Popups and sounds when a session wants you
+function noticeAttention(rows, now, forced = null) {
+  const p = partition(rows, prefs.dismissed)
+  const events = forced ?? attention.step(rows.filter((r) => !isQuiet(r)), { focusedId: ui.focusedId, now, jobs: state.jobs })
+  const dark = applyTheme()
+  for (const { kind, row } of events) {
+    const n = p.shown.indexOf(row) + 1
+    // Dismissed sessions get no popup
+    if (!n) continue
+    const swatch = colourOf(row.id, dark)
+    const fill = swatch ?? (kind === DONE ? (dark ? '#8D8E91' : '#6B6D73') : dark ? '#E8A93A' : '#C27C00')
+    debug(`toast-add ${row.id} kind ${kind} swatch ${colourOf(row.id, dark)} dark ${dark}`)
+    tauri?.event.emitTo('toasts', 'toast-add', {
+      id: row.id, n: String(n).padStart(2, '0'), kind, name: shownName(row, state.shared.projectNames), detail: popupDetail(kind, row),
+      fill, ink: swatch ? inkFor(swatch) : kind === DONE ? (dark ? '#131416' : '#FFFFFF') : '#1A1203', dot: kind === DONE ? (dark ? '#8D8E91' : '#6B6D73') : dark ? '#E8A93A' : '#C27C00', dark,
+    })
+  }
+  // Test popups and test runs (SESSION_BOARD_SHARED_DIR) make no sound
+  const sound = forced || ui.testing ? null : soundFor(events, { soundsOn: prefs.soundsOn, moments: prefs.soundMoments, lastSoundAt: ui.lastSoundAt, now })
+  if (sound !== null) {
+    ui.lastSoundAt = now
+    play(prefs.soundChoices[sound] ?? DEFAULT_SOUNDS[sound], prefs.alertVolume || 1, DEFAULT_SOUNDS[sound])
+  }
+}
+
+function play(id, volume = 1, fallback) {
+  const file = (SOUNDS[id] ?? SOUNDS[fallback] ?? SOUNDS[DEFAULT_SOUNDS[0]])[1]
+  const audio = new Audio(file)
+  audio.volume = Math.max(0, Math.min(1, volume))
+  audio.play().catch(() => {})
+}
+
+// The popup window sits beside the board: left of it, else right, else above, else below, else
+// over its top; level with the first card. Only while the board shows.
+const debug = (msg) => ui.testing && invoke('log', { msg })
+async function placeToasts() {
+  if (!tauri) return
+  debug(`placeToasts count=${ui.toastCount}`)
+  const toastWin = await tauri.webviewWindow.WebviewWindow.getByLabel('toasts')
+  const boardWin = tauri.window.getCurrentWindow()
+  if (!toastWin) return
+  const visible = await boardWin.isVisible()
+  debug(`board visible=${visible}`)
+  if (!ui.toastCount || !visible) return invoke('set_toasts_visible', { visible: false })
+  const scale = await boardWin.scaleFactor()
+  const pos = (await boardWin.outerPosition()).toLogical(scale)
+  const size = (await boardWin.outerSize()).toLogical(scale)
+  const mon = await tauri.window.currentMonitor()
+  const area = mon?.workArea ?? { position: mon?.position, size: mon?.size }
+  const S = { x: area.position.x / scale, y: area.position.y / scale, w: area.size.width / scale, h: area.size.height / scale }
+  const w = 56, h = ui.toastCount * 40 + (ui.toastCount - 1) * 9 + 16, gap = 4
+  const listTop = document.getElementById('list')?.getBoundingClientRect().top
+  const below = prefs.collapsed || ui.settings || listTop === undefined ? 0 : listTop + 4 - 8
+  const clampY = (y) => Math.max(S.y, Math.min(y, S.y + S.h - h))
+  let x, y
+  if (pos.x - gap - w >= S.x) { x = pos.x - gap - w; y = clampY(pos.y + below) }
+  else if (pos.x + size.width + gap + w <= S.x + S.w) { x = pos.x + size.width + gap; y = clampY(pos.y + below) }
+  else if (pos.y - gap - h >= S.y) { x = pos.x + (size.width - w) / 2; y = pos.y - gap - h }
+  else if (pos.y + size.height + gap + h <= S.y + S.h) { x = pos.x + (size.width - w) / 2; y = pos.y + size.height + gap }
+  else { x = pos.x + size.width - w - 8; y = pos.y + 70 }
+  debug(`toasts at ${Math.round(x)},${Math.round(y)} size ${w}x${h}`)
+  await toastWin.setSize(new tauri.dpi.LogicalSize(w, h))
+  await toastWin.setPosition(new tauri.dpi.LogicalPosition(Math.round(x), Math.round(y)))
+  await invoke('set_toasts_visible', { visible: true })
+  debug('toasts shown')
+}
+
+// ---- Hide when you switch away: the floating board shows only while Claude is the app in front
+async function followFrontApp() {
+  if (!tauri || ui.testing || prefs.regularWindow || !prefs.hideWhenAway || prefs.userHidden) return
+  const front = await invoke('front_app').catch(() => null)
+  // The OS won't say (Wayland): leave the board as it is
+  if (!front) return
+  if (front.pid === ui.ownPid) return
+  const exe = String(front.path || front.app || '').split(/[\\/]/).pop().toLowerCase().replace(/\.app$/, '')
+  const app = String(front.app || '').toLowerCase()
+  const isClaude = CLAUDE_APPS.includes(exe) || app === 'claude'
+  const isTerminal = TERMINALS.includes(exe) || TERMINALS.includes(app)
+  const away = !(isClaude || (prefs.terminalsCount && isTerminal))
+  if (away === ui.away) return
+  ui.away = away
+  const w = tauri.window.getCurrentWindow()
+  away ? await w.hide() : await invoke('show_window', { label: 'board' })
+  placeToasts()
+}
+
+// ---- Theme: your pick, else Claude Desktop's, else the system's
 function applyTheme() {
-  const dark = prefs.theme ? prefs.theme === 'dark' : params.get('theme') ? params.get('theme') === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
+  const pick = prefs.theme ?? ui.claudeTheme
+  const dark = pick ? pick === 'dark' : params.get('theme') ? params.get('theme') === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
   document.documentElement.dataset.theme = dark ? 'dark' : 'light'
   return dark
 }
@@ -143,19 +256,41 @@ function settingsPage() {
   const floating = !prefs.regularWindow
   return `<div class="settings">
 <div class="cell"><span class="section">WINDOW</span>
-<div class="setting"><div class="txt"><b>Floating or Regular</b><span>${floating ? 'Floating stays above other apps.' : 'A normal window. Other windows can cover it.'}</span></div><div class="seg"><button class="${floating ? 'on' : ''}" data-action="window" data-v="floating">Floating</button><button class="${floating ? '' : 'on'}" data-action="window" data-v="regular">Regular</button></div></div></div>
+<div class="setting"><div class="txt"><b>Floating or Regular</b><span>${floating ? 'Floating stays above other apps.' : 'A normal window. Other windows can cover it.'}</span></div><div class="seg"><button class="${floating ? 'on' : ''}" data-action="window" data-v="floating">Floating</button><button class="${floating ? '' : 'on'}" data-action="window" data-v="regular">Regular</button></div></div>
+${floating ? `<div class="setting"><div class="txt"><b>Hide when you switch away</b><span>Shows only while Claude is in front.</span></div>${sw(prefs.hideWhenAway, 'pref', 'data-key="hideWhenAway"')}</div>
+<div class="setting indent ${prefs.hideWhenAway ? '' : 'off'}"><div class="txt"><b>Terminals and editors count as Claude</b><span>Terminals, VS Code, Cursor, Zed.</span></div>${sw(prefs.terminalsCount, 'pref', 'data-key="terminalsCount"')}</div>` : ''}</div>
 <div class="cell"><div class="setting"><div class="txt"><span class="section">THEME</span><span style="margin-top:6px">${prefs.theme ? 'Stays as you picked it.' : 'Like your system until you pick one.'}</span></div><div class="seg"><button class="${applyTheme() ? '' : 'on'}" data-action="theme" data-v="light">Light</button><button class="${applyTheme() ? 'on' : ''}" data-action="theme" data-v="dark">Dark</button></div></div></div>
 <div class="cell"><span class="section">NAMES</span>
 <div class="setting"><div class="txt"><b>Project first</b><span>Each name starts with its project: the Git repo or folder the session runs in.</span></div>${sw(s.projectNames, 'shared', 'data-key="projectNames"')}</div>
 <div class="setting indent ${s.projectNames ? '' : 'off'}"><div class="txt"><b>Also rename in Claude Code</b><span>Advanced. Renames each session once, so Claude Code and Claude Desktop show the project too. A new session's first message waits up to 4 s for its name (one small Sonnet call).</span></div>${sw(s.renameSessions, 'shared', 'data-key="renameSessions"')}</div></div>
 <div class="cell"><span class="section">SUMMARIES</span>
 <div class="setting"><div class="txt"><b>Summaries by Sonnet</b><span>A few small calls per turn, on your account. Off: each card shows what you asked and its task list.</span></div>${sw(s.summaries, 'shared', 'data-key="summaries"')}</div></div>
+${soundsSection()}
 <div class="cell"><span class="section">SHORTCUT</span>
 <div class="setting"><div class="txt"><b>Show or hide, from any app</b><span>${esc(keyLabel(prefs.shortcut))}</span></div></div></div>
 <div class="cell"><span class="section">FEEDBACK</span>
 <div class="setting"><div class="txt"><b>Something wrong, or an idea?</b><span>Opens GitHub with your versions filled in. Or tell Claude in any session, and say report.</span></div></div>
 <div style="display:flex;gap:8px"><button class="quiet-btn" data-action="feedback" data-v="bug">Report a problem</button><button class="quiet-btn" data-action="feedback" data-v="idea">Suggest an idea</button></div>
 <div class="version">Session Board ${VERSION}</div></div></div>`
+}
+
+function soundsSection() {
+  const bars = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+  const vol = bars.map((v, i) => i === 0
+    ? `<button class="quiet-btn ${prefs.alertVolume === 0 ? 'on-chip' : ''}" data-action="volume" data-v="0" title="Play at the volume your computer is set to">Mine</button>`
+    : `<button class="bar ${prefs.alertVolume >= v - 0.001 && prefs.alertVolume ? 'on' : ''}" data-action="volume" data-v="${v}" style="height:${8 + i * 1.2}px" title="${Math.round(v * 100)}%"></button>`).join('')
+  const rows = MOMENTS.map(([title, detail, dot], m) => {
+    const choice = prefs.soundChoices[m] ?? DEFAULT_SOUNDS[m]
+    const open = ui.openChooser === m
+    const chips = Object.entries(SOUNDS).map(([id, [name]]) => `<button class="chip-btn ${id === choice ? 'on' : ''}" data-action="choose-sound" data-m="${m}" data-v="${id}">${esc(name)}</button>`).join('')
+    return `<div class="sound-row"><span class="dot" style="background:var(${dot})"></span><div class="txt"><b>${title}</b><span>${detail}</span>
+<button class="sound-name" data-action="chooser" data-m="${m}">${esc(SOUNDS[choice]?.[0] ?? 'Missing sound')} ${open ? '⌃' : '⌄'}</button></div>
+<button class="play" data-action="play" data-v="${choice}">▶ Play</button>${sw(prefs.soundMoments[m], 'moment', `data-m="${m}"`)}</div>${open ? `<div class="chips">${chips}</div>` : ''}`
+  }).join('')
+  return `<div class="cell"><span class="section">SOUNDS</span>
+<div class="setting"><div class="txt"><b>Sounds</b><span>Never for ordinary work, never for the session you're viewing.</span></div>${sw(prefs.soundsOn, 'pref', 'data-key="soundsOn"')}</div>
+<div class="${prefs.soundsOn ? '' : 'off-block'}"><div class="setting"><div class="txt"><b>Alert volume</b></div><span class="vol-label">${prefs.alertVolume ? Math.round(prefs.alertVolume * 100) + '%' : 'Your volume'}</span></div>
+<div class="bars">${vol}</div><div class="sounds">${rows}</div></div></div>`
 }
 
 function render() {
@@ -225,6 +360,12 @@ document.addEventListener('click', (e) => {
     case 'theme': prefs.theme = v; break
     case 'window': prefs.regularWindow = v === 'regular'; tauri?.window.getCurrentWindow().setAlwaysOnTop(!prefs.regularWindow); break
     case 'shared': setShared(key, !state.shared[key]); break
+    case 'pref': prefs[key] = !prefs[key]; if (key === 'hideWhenAway' || key === 'terminalsCount') { ui.away = false; invoke('show_window', { label: 'board' }) } break
+    case 'moment': prefs.soundMoments[Number(el.dataset.m)] = !prefs.soundMoments[Number(el.dataset.m)]; break
+    case 'volume': prefs.alertVolume = Number(v); if (prefs.alertVolume) play(prefs.soundChoices[0], prefs.alertVolume); break
+    case 'chooser': ui.openChooser = ui.openChooser === Number(el.dataset.m) ? null : Number(el.dataset.m); break
+    case 'choose-sound': prefs.soundChoices = prefs.soundChoices.map((c, i) => (i === Number(el.dataset.m) ? v : c)); play(v); break
+    case 'play': play(v); return
     case 'feedback': invoke('plugin:opener|open_url', { url: feedbackUrl(v) }); if (!tauri) window.open(feedbackUrl(v)); return
   }
   savePrefs()
@@ -247,11 +388,25 @@ document.addEventListener('contextmenu', (e) => {
   const line = e.target.closest('[data-copy]')
   navigator.clipboard?.writeText(line ? line.dataset.copy : sessionText(row, { jobs: state.jobs[row.id] ?? [], removed: prefs.removedItems[row.id] ?? [], projectNames: state.shared.projectNames }))
 })
+tauri?.event.listen('toasts-count', ({ payload }) => { ui.toastCount = payload; placeToasts() })
+tauri?.event.listen('toast-open', ({ payload }) => { const row = state.rows.find((r) => r.id === payload); if (row) openSession(row) })
+tauri?.window.getCurrentWindow().onMoved(() => placeToasts())
+tauri?.window.getCurrentWindow().onResized(() => placeToasts())
 tauri?.event.listen('menu', ({ payload }) => {
   if (payload === 'settings') { ui.settings = true; render() }
   if (payload === 'report') invoke('plugin:opener|open_url', { url: feedbackUrl('bug') })
 })
 
-if (tauri) invoke('set_shortcut', { keys: prefs.shortcut }).catch(() => {})
+if (tauri) {
+  invoke('set_shortcut', { keys: prefs.shortcut }).catch(() => {})
+  invoke('own_pid').then((pid) => { ui.ownPid = pid })
+  // Test runs report where the window is, in the app's log
+  setTimeout(async () => {
+    if (!ui.testing) return
+    const w = tauri.window.getCurrentWindow()
+    invoke('log', { msg: `board visible=${await w.isVisible()} at ${JSON.stringify(await w.outerPosition())} size ${JSON.stringify(await w.outerSize())}` })
+  }, 4000)
+  setInterval(() => followFrontApp().catch(() => {}), 500)
+}
 read()
 setInterval(() => read().catch(() => {}), 2000)

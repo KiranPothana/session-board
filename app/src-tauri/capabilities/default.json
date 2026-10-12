@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "What the board window may do",
-  "windows": ["board"],
+  "windows": [
+    "board",
+    "toasts"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -12,6 +15,21 @@
     "core:window:allow-set-size",
     "opener:allow-open-url",
     "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister"
+    "global-shortcut:allow-unregister",
+    "core:window:allow-set-position",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:event:default",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-scale-factor",
+    "core:window:allow-current-monitor",
+    "core:webview:default",
+    "core:window:allow-get-all-windows",
+    "core:webview:allow-get-all-webviews",
+    "core:window:allow-is-visible",
+    "core:window:allow-set-focus",
+    "core:event:allow-emit-to",
+    "core:event:allow-emit",
+    "core:event:allow-listen"
   ]
 }

@@ -10,10 +10,11 @@ edition = "2021"
 tauri-build = { version = "=2.7.0", features = [] }
 
 [dependencies]
-tauri = { version = "=2.12.0", features = ["tray-icon"] }
+tauri = { version = "=2.12.0", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-global-shortcut = "=2.4.0"
 tauri-plugin-opener = "=2.6.0"
 serde = { version = "1", features = ["derive"] }
+active-win-pos-rs = "=0.11.0"
 serde_json = "1"
 
 [profile.release]
@@ -22,3 +23,8 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# On macOS the windows are put on screen without activating the app, as the SwiftUI panel did
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = "=2.1.0"
+

@@ -1,0 +1,11 @@
+/* The popup tiles beside the board, in their own transparent window that the board places and
+   sizes to fit them exactly (nothing around the tiles to catch clicks). As in the macOS app: a 40 pt
+   tile with the session's number, an outline that runs down over 8 seconds, and a dot that closes it. */
+html, body { margin: 0; background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none; }
+#stack { display: flex; flex-direction: column; align-items: flex-end; gap: 9px; padding: 8px; }
+.toast { position: relative; width: 40px; height: 40px; cursor: pointer; }
+.tile { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font: 700 15px ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+svg.ring { position: absolute; left: -2.5px; top: -2.5px; width: 45px; height: 45px; overflow: visible; pointer-events: none; }
+svg.ring rect { fill: none; stroke-width: 1.5; stroke-linecap: round; }
+.dot { position: absolute; right: -4px; top: -4px; width: 9px; height: 9px; border-radius: 6px; box-sizing: content-box; border: 1.5px solid var(--gap); display: flex; align-items: center; justify-content: center; font: 700 9px system-ui, sans-serif; color: transparent; transition: width .12s, height .12s, right .12s, top .12s; }
+.toast:hover .dot { width: 14px; height: 14px; right: -6px; top: -6px; background: var(--text) !important; color: var(--gap); }

@@ -268,3 +268,68 @@ export function inkFor(hex) {
   const L = 0.2126 * r + 0.7152 * g + 0.0722 * b
   return (L + 0.05) / 0.0545 >= 1.05 / (L + 0.05) ? '#0B0B0C' : '#FFFFFF'
 }
+
+// ---- When a session wants you: popups and sounds (the macOS app's considerSounds)
+
+export const NEEDS_YOU = 0
+export const YOUR_TURN = 1
+export const DONE = 2
+const SETTLE_READS = 2
+const YOUR_TURN_WINDOW_MS = 90_000
+const DONE_DELAY_MS = 15_000
+export const SOUND_GAP_MS = 8000
+
+// Fed every read, it says which sessions just started needing you, ended a turn with something
+// for you, or finished. A status counts once two reads in a row agree, and the first one seen
+// for a session says nothing (the board just started, or the session just appeared).
+export class Attention {
+  constructor() {
+    this.reads = new Map() // id -> { status, count }
+    this.settled = new Map() // id -> status
+    this.ended = new Map() // id -> when its turn ended (ms)
+  }
+
+  step(rows, { focusedId = null, now = Date.now(), jobs = {} } = {}) {
+    const events = []
+    for (const row of rows) {
+      const read = this.reads.get(row.id)
+      const count = read?.status === row.status ? read.count + 1 : 1
+      this.reads.set(row.id, { status: row.status, count })
+      const before = this.settled.get(row.id)
+      if (count >= SETTLE_READS && before !== row.status) {
+        this.settled.set(row.id, row.status)
+        if (before !== undefined) {
+          if (row.status === 'needs-you' && row.id !== focusedId) events.push({ kind: NEEDS_YOU, row })
+          if (before === 'working' && row.status === 'idle') this.ended.set(row.id, now)
+        }
+        if (row.status !== 'idle') this.ended.delete(row.id)
+      }
+      const ended = this.ended.get(row.id)
+      if (ended === undefined || this.settled.get(row.id) !== 'idle') continue
+      const waits = row.items.some((i) => i.waitsOnYou)
+      const running = (jobs[row.id] ?? []).length || row.agentsRunning || row.workflowsRunning
+      let kind = null
+      if (waits && now - ended < YOUR_TURN_WINDOW_MS) kind = YOUR_TURN
+      else if (!waits && !running && now - ended >= DONE_DELAY_MS) kind = DONE
+      if (kind === null) continue
+      this.ended.delete(row.id)
+      if (row.id !== focusedId) events.push({ kind, row })
+    }
+    return events
+  }
+}
+
+// The sound to play for this read's events, if any: the most urgent switched-on moment, at most
+// one every SOUND_GAP_MS
+export function soundFor(events, { soundsOn = true, moments = [true, true, false], lastSoundAt = 0, now = Date.now() } = {}) {
+  if (!soundsOn || now - lastSoundAt < SOUND_GAP_MS) return null
+  const kinds = events.map((e) => e.kind).filter((k) => moments[k]).sort()
+  return kinds.length ? kinds[0] : null
+}
+
+// What a popup says under its number: why it wants you
+export function popupDetail(kind, row) {
+  if (kind === NEEDS_YOU) return row.ask || 'Needs you'
+  if (kind === YOUR_TURN) return row.items.find((i) => i.waitsOnYou)?.text ?? 'Your turn'
+  return row.justDid || 'Done'
+}

@@ -133,3 +133,22 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .seg button { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 5px; color: var(--soft); }
 .seg button.on { background: var(--text); color: var(--cell); }
 .version { font: 10.5px var(--mono); color: var(--prefix); padding-top: 6px; }
+
+.off-block { opacity: .45; pointer-events: none; }
+.bars { display: flex; align-items: flex-end; gap: 4px; margin: 4px 0 8px; height: 24px; }
+.bars .bar { width: 12px; border-radius: 2px; background: var(--seg-track); }
+.bars .bar.on { background: var(--text); }
+.on-chip { background: var(--text) !important; color: var(--cell) !important; }
+.vol-label { font: 600 11px var(--mono); color: var(--soft); }
+.sounds { display: flex; flex-direction: column; gap: 10px; }
+.sound-row { display: flex; align-items: flex-start; gap: 10px; }
+.sound-row .dot { margin: 6px 2px 0 0; }
+.sound-row .txt { flex: 1; min-width: 0; }
+.sound-row .txt b { display: block; font-size: 12.5px; font-weight: 600; }
+.sound-row .txt span { display: block; font-size: 11px; color: var(--muted); }
+.sound-name { margin-top: 3px; font: 600 11px var(--mono); color: var(--soft); }
+.play { font: 600 11px var(--mono); color: var(--doing); border: 1px solid var(--chip-border); border-radius: 4px; padding: 2px 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 20px; }
+.chip-btn { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 5px; background: var(--seg-track); color: var(--soft); }
+.chip-btn.on { background: var(--text); color: var(--cell); }
+.switch { cursor: pointer; }
