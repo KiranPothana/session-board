@@ -3,7 +3,7 @@
   "owner": {
     "name": "Kiran Pothana"
   },
-  "description": "Session Board: a Claude Code mod for macOS. One floating window showing what every Claude Code session is doing.",
+  "description": "Session Board: a Claude Code mod that shows every Claude Code session in one floating window, with live summaries and what needs you. Mac, Windows and Linux.",
   "plugins": [
     {
       "name": "session-board",

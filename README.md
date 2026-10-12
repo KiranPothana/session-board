@@ -2,8 +2,9 @@
 
 **[sessionboard.dev](https://sessionboard.dev)**
 
-**A Claude Code mod: every Claude Code session on your computer, in one window.** Mac, Windows and Linux.
-✓ what it did · ▶ what it's doing · ○ what's next · what's waiting on you.
+**Session Board is a Claude Code mod that shows every Claude Code session on your computer in one floating window**, with a live summary of each: what it just did, what it's doing, what's next, and which sessions need you. Terminal, Remote Control and Claude Desktop. Mac, Windows and Linux.
+
+✓ what it did · ▶ what it's doing · · what's next · ! what's waiting on you
 
 <details><summary><b>Copy for AI</b>: paste this into Claude and it explains Session Board and installs it for you</summary>
 
