@@ -28,6 +28,10 @@ type Opts = {
   registry?: Record<string, object>
   decision?: string
   env?: Record<string, string>
+  // While it answers true, checking a file never answers (a step of a summary that hangs)
+  stuck?: () => boolean
+  // Holds a tool call until the promise it gives settles (a call waiting on a permission prompt)
+  hold?: (e: any) => Promise<void> | void
   // Files by path ending, read before anything else; paths that exist; a command's answer
   files?: Record<string, string>
   exists?: (path: string) => boolean
@@ -130,7 +134,11 @@ function stubEngine(on: any, opts: Opts = {}) {
     opts.writes?.push([e.path, e.text])
     return { value: undefined }
   })
-  on('fs.stat', () => ({ value: { kind: 'file', size: opts.size ?? (opts.tail ?? '').length, mtimeMs: 5, isLink: false } }))
+  on('fs.stat', async () => {
+    // A step that never answers, while stuck() says so
+    if (opts.stuck?.()) await new Promise(() => {})
+    return { value: { kind: 'file', size: opts.size ?? (opts.tail ?? '').length, mtimeMs: 5, isLink: false } }
+  })
   on('ui.toast', ($: any, e: any) => {
     opts.toasts?.push(String(e.text ?? e))
     return { value: undefined }
@@ -139,8 +147,9 @@ function stubEngine(on: any, opts: Opts = {}) {
   on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('tool.check', () => ({ decision: opts.decision ?? 'allow' }))
-  on('tool.call', ($: any, e: any) =>
-    e.tool === 'TaskCreate'
+  on('tool.call', async ($: any, e: any) =>
+    (await opts.hold?.(e),
+    e.tool === 'TaskCreate')
       ? { result: { task: { id: '7', subject: e.subject } }, text: `Task #7 created successfully: ${e.subject}` }
       : { result: 'ok', text: 'ok' },
   )
@@ -218,18 +227,25 @@ test('with summaries switched off in the window, no model call is made', async (
 })
 
 test('a permission prompt on screen marks the session as needing you; Auto mode checks do not', async ($, on) => {
-  const { saved } = stubEngine(on, { decision: 'ask' })
-  on('classic.PermissionRequest', () => ({}))
+  let release = () => {}
+  const { saved } = stubEngine(on, { decision: 'ask', hold: (e) => (e.command === 'rm -rf build' ? new Promise<void>((r) => (release = r)) : undefined) })
+  on('classic.Notification', () => ({}))
   await start($)
   await $.turn.start({ text: 'go', turnId: 't1' })
   // An "ask" the Auto mode classifier settles: no prompt, so still working
   await $.tool.check({ tool: 'Bash', command: 'du -sh ~' })
   await settle()
   expect((saved.get('s:' + ME) as any).status).toBe('working')
-  // The prompt really shows
-  await $.classic.PermissionRequest({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf build' } } as any)
+  // The prompt really shows, for the call that waits on it
+  const call = $.tool.call({ tool: 'Bash', command: 'rm -rf build', toolUseId: 'u1' })
+  await settle()
+  await $.classic.Notification({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' } as any)
   await waitFor(() => (saved.get('s:' + ME) as any)?.status === 'needs-you')
-  expect((saved.get('s:' + ME) as any).status).toBe('needs-you')
+  expect((saved.get('s:' + ME) as any).ask).toBe('Allow Bash: rm -rf build')
+  // Allowed: the call goes on, and the session works again
+  release()
+  await call
+  await waitFor(() => (saved.get('s:' + ME) as any)?.status === 'working')
 })
 
 test('a new message clears "waits on you"', async ($, on) => {
@@ -827,11 +843,13 @@ test('a side task and the work it paused come through the summary', async ($, on
 })
 
 test('a permission prompt records what it asks, and answering clears it', async ($, on) => {
-  const { saved } = stubEngine(on)
-  on('classic.PermissionRequest', () => ({}))
+  const { saved } = stubEngine(on, { hold: (e) => (e.command === './deploy.sh' ? new Promise<void>(() => {}) : undefined) })
+  on('classic.Notification', () => ({}))
   await start($)
   await $.turn.start({ text: 'go', turnId: 't1' })
-  await $.classic.PermissionRequest({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: './deploy.sh', description: 'Deploy v1.20.104 to the sandbox' } } as any)
+  void $.tool.call({ tool: 'Bash', command: './deploy.sh', description: 'Deploy v1.20.104 to the sandbox', toolUseId: 'u1' })
+  await settle()
+  await $.classic.Notification({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' } as any)
   await waitFor(() => !!(saved.get('s:' + ME) as any)?.ask)
   expect((saved.get('s:' + ME) as any).ask).toBe('Allow Bash: Deploy v1.20.104 to the sandbox')
   await $.prompt.submit({ text: 'yes', origin: { kind: 'composer' }, wait: false })
@@ -1094,6 +1112,31 @@ test('a turn whose last summary was lost, as the mod reloaded when it ended, is 
   expect(prompts.filter((p) => p.includes('Run gh auth login yourself'))).toHaveLength(1)
 })
 
+test('a summary stuck on a step that never answers is given up on after 3 minutes, so the next one runs', async ($, on) => {
+  const prompts: string[] = []
+  let stuck = true
+  const { clock } = stubEngine(on, {
+    prompts,
+    // Reading the saved conversation never answers while stuck
+    stuck: () => stuck,
+  })
+  await start($)
+  await $.prompt.submit({ text: 'first', origin: { kind: 'composer' }, wait: false })
+  await settle()
+  expect(prompts.length).toBe(0)
+  stuck = false
+  // Within 3 minutes the next one waits its turn
+  await clock.advance(60_000)
+  await $.prompt.submit({ text: 'second', origin: { kind: 'composer' }, wait: false })
+  await settle()
+  expect(prompts.length).toBe(0)
+  // Past 3 minutes the stuck one is given up on
+  await clock.advance(3 * 60_000)
+  await $.prompt.submit({ text: 'third', origin: { kind: 'composer' }, wait: false })
+  await waitFor(() => prompts.length > 0)
+  expect(prompts[prompts.length - 1]).toContain('third')
+})
+
 test('a summary call that never answers is given up on, so later summaries still run', async ($, on) => {
   let hanging = true
   const answer = () => ({ active: [], pending: ['Try the new popup · waits on you'] })
@@ -1172,29 +1215,3 @@ test('on Linux the AppImage is downloaded, checked, made runnable and started on
   expect(runs.find((r) => r[0] === 'sh' && String(r[2]).includes('nohup'))!.at(-1)).toBe(dir + '/Session-Board.AppImage')
 })
 
-test('on a Mac, once a release has a Mac build, it is downloaded, checked, put in place, signed with your certificate and opened', async ($, on) => {
-  const runs: string[][] = []
-  const writes: string[][] = []
-  const release = JSON.stringify({ version: '0.3.0', assets: { 'macos-universal': { file: 'Session-Board-macos.tar.gz', sha256: SUM } } })
-  const identity = 'A'.repeat(40)
-  stubEngine(on, {
-    runs, writes, files: { '/app/release.json': release }, exists: () => false,
-    run: (argv) => {
-      if (argv[0] === 'shasum') return { exitCode: 0, stdout: SUM + '  file\n' }
-      if (argv[0] === 'security') return { exitCode: 0, stdout: `  1) ${identity} "Apple Development: K (TEAM)"\n     1 valid identities found\n` }
-      return undefined
-    },
-  })
-  await start($)
-  await waitFor(() => runs.some((r) => r[0] === 'open'))
-  const tmp = DATA + '/Session-Board-macos.tar.gz.download'
-  expect(runs.find((r) => r[0] === 'curl')!.at(-1)).toBe('https://github.com/KiranPothana/session-board/releases/download/v0.3.0/Session-Board-macos.tar.gz')
-  expect(runs).toContainEqual(['pkill', '-x', 'SessionBoard'])
-  expect(runs).toContainEqual(['rm', '-rf', APP])
-  expect(runs).toContainEqual(['tar', '-xzf', tmp, '-C', HOME + '/Applications'])
-  expect(runs).toContainEqual(['codesign', '--force', '--deep', '-s', identity, APP])
-  expect(writes).toContainEqual([DATA + '/app-version.txt', '0.3.0'])
-  expect(runs.find((r) => r[0] === 'open')).toEqual(['open', '-g', APP])
-  // No Swift build
-  expect(runs.some((r) => r[0] === 'sh' && String(r[1]).endsWith('build.sh'))).toBe(false)
-})

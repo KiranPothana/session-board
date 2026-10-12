@@ -56,6 +56,9 @@ const SUMMARY_RETRIES = 2
 // A summary call that hasn't answered after this long is given up on, so one that hangs can't
 // hold back every summary after it
 const SUMMARY_TIMEOUT_MS = 90 * 1000
+// A summary still going after this long (a step besides the model call that never answered) is
+// given up on, so the next one can run
+const SUMMARY_STUCK_MS = 3 * 60 * 1000
 // How long a summary after a turn waits for the turn's last reply to reach the saved conversation
 const ANSWER_WAIT_MS = 1000
 const ANSWER_TRIES = 3
@@ -96,6 +99,9 @@ let me = null
 // work it starts
 let awaitingReply = ''
 let summarizing = false
+// When the summary under way started, and a count of runs, so a stuck one can be given up on
+let summarizingSince = 0
+let summaryRun = 0
 // A summary was asked for while one ran: run again once it's done, with what's new
 let summarizeAgain = false
 // The reply the last turn ended with, until the next one starts
@@ -116,6 +122,8 @@ let liveReg = new Map()
 const seenTranscripts = new Map()
 // This process's build of the window app, while it runs
 let building = null
+// The tool call under way (a permission prompt is for it)
+let callInProgress = null
 
 const oneLine = (s, n) => {
   const line = String(s ?? '').split('\n').map((x) => x.trim()).find(Boolean) ?? ''
@@ -552,13 +560,26 @@ async function summarizeExchanges($, id, exchanges, pendingAsk, previous, workin
 // its own task list, which is exact.
 async function summarize($, { onlyIfNew = false } = {}) {
   if (!me || openTasks(me).length > 0) return
-  if (summarizing) {
+  let started
+  try {
+    started = await $.clock.now()
+  } catch {
+    // The session is going away
+    return
+  }
+  // One at a time; but one stuck this long (a step that never answered) is given up on, so it
+  // can't hold back every summary after it, the turn-end catch-up included
+  if (summarizing && started - summarizingSince < SUMMARY_STUCK_MS) {
     summarizeAgain = true
     return
   }
+  const run = ++summaryRun
   summarizing = true
+  summarizingSince = started
+  // Where the last summary got to, kept on the record, for when a board falls behind
+  me.summaryTry = { at: started, stage: 'reading' }
   try {
-    lastTry = await $.clock.now()
+    lastTry = started
     if (!(await summariesOn($))) return
     // The saved conversation records everything, messages sent mid-turn included; the
     // session's messages are the fallback
@@ -589,7 +610,9 @@ async function summarize($, { onlyIfNew = false } = {}) {
     me.runningLabels = describedOnly(running, own.commands)
     const jobs = [...running.map((j) => j.label), ...backgroundLabels(me.agentsRunning, me.workflowsRunning)]
     me.jobsKey = [...jobs].sort().join(',')
+    me.summaryTry = { at: started, stage: 'asking the model' }
     me.summary = await summarizeExchanges($, me.id, exchanges.slice(-EXCHANGES), pendingAsk, me.summary, me.status !== 'idle', jobs)
+    me.summaryTry = { at: started, stage: 'done' }
     me.summaryReply = latestReply
     delete me.summaryError
     summaryFailures = 0
@@ -599,15 +622,19 @@ async function summarize($, { onlyIfNew = false } = {}) {
     // Tried once more a little later: after the turn's last summary, nothing else would, and the
     // board would keep showing the work as under way.
     if (me) {
+      me.summaryTry = { ...(me.summaryTry ?? {}), stage: 'failed' }
       me.summaryError = oneLine(err?.message ?? err, 200)
       publishSoon($)
     }
     if (++summaryFailures <= SUMMARY_RETRIES) void $.clock.sleep(SUMMARY_RETRY_MS).then(() => summarize($)).catch(() => {})
   } finally {
-    summarizing = false
-    if (summarizeAgain) {
-      summarizeAgain = false
-      void summarize($)
+    // A run given up on that ends late leaves the newer one alone
+    if (run === summaryRun) {
+      summarizing = false
+      if (summarizeAgain) {
+        summarizeAgain = false
+        void summarize($)
+      }
     }
   }
 }
@@ -874,6 +901,8 @@ async function checkOwnJobs($) {
   const own = await ownTranscript($)
   const latest = own.exchanges[own.exchanges.length - 1]?.reply ?? ''
   const missed = own.ended && latest !== '' && latest !== me.summaryReply && latest !== healedReply
+  // What the last idle check saw, kept on the record, for when a board falls behind
+  me.idleCheck = { at: await $.clock.now(), ended: !!own.ended, missed }
   if (missed) {
     healedReply = latest
     return summarize($)
@@ -1073,37 +1102,20 @@ async function releaseOf($) {
   }
 }
 
-// macOS gets the downloaded app once a release has one (one app for Apple Silicon and Intel);
-// until then it builds the SwiftUI app as before
-async function macDownloads($) {
-  const release = await releaseOf($)
-  return /^[0-9a-f]{64}$/.test(release?.assets?.['macos-universal']?.sha256 ?? '')
-}
-
 async function downloadedApp($) {
   const os = await osOf($)
   const release = await releaseOf($)
   if (!release) throw new Error("the plugin's app/release.json is missing")
-  let key = 'macos-universal'
-  if (os !== 'macos') {
-    const machine = os === 'windows'
-      ? String((await $.env.get('PROCESSOR_ARCHITECTURE')) ?? '')
-      : String((await $.process.run(['uname', '-m'], { timeoutMs: 5000 }).catch(() => null))?.stdout ?? '').trim()
-    key = `${os}-${/arm64|aarch64/i.test(machine) ? 'arm64' : 'x64'}`
-  }
+  const machine = os === 'windows'
+    ? String((await $.env.get('PROCESSOR_ARCHITECTURE')) ?? '')
+    : String((await $.process.run(['uname', '-m'], { timeoutMs: 5000 }).catch(() => null))?.stdout ?? '').trim()
+  const key = `${os}-${/arm64|aarch64/i.test(machine) ? 'arm64' : 'x64'}`
   const asset = release.assets?.[key]
   if (!asset?.file || !/^[0-9a-f]{64}$/.test(asset.sha256 ?? '')) throw new Error(`there's no Session Board window app for ${key} yet`)
   // Where it goes, and the file saying which version is there
-  let dir, app, versionFile
-  if (os === 'macos') {
-    dir = (await homeOf($)) + '/Applications'
-    app = dir + '/' + APP_NAME
-    versionFile = (await dataDir($)) + '/app-version.txt'
-  } else {
-    dir = os === 'windows' ? ((await $.env.get('LOCALAPPDATA')) || (await homeOf($)) + '/AppData/Local') + '/Programs/Session Board' : (await dataDir($)) + '/app'
-    app = dir + '/' + asset.file
-    versionFile = dir + '/version.txt'
-  }
+  const dir = os === 'windows' ? ((await $.env.get('LOCALAPPDATA')) || (await homeOf($)) + '/AppData/Local') + '/Programs/Session Board' : (await dataDir($)) + '/app'
+  const app = dir + '/' + asset.file
+  const versionFile = dir + '/version.txt'
   let have = ''
   try {
     have = String(await $.fs.read(versionFile)).trim()
@@ -1116,7 +1128,6 @@ async function downloadedApp($) {
 async function installApp($, d) {
   const run = (argv, timeoutMs = 60000) => $.process.run(argv, { timeoutMs })
   const ps = (script, timeoutMs = 60000) => powershell($, script, timeoutMs)
-  if (d.os === 'macos') return installMacApp($, d, run)
   const tmp = d.app + '.download'
   if (d.os === 'windows') await ps(`New-Item -ItemType Directory -Force -Path ${psQuote(d.dir)} | Out-Null`)
   else await run(['mkdir', '-p', d.dir])
@@ -1141,36 +1152,10 @@ async function installApp($, d) {
   await $.fs.write(d.versionFile, d.version)
 }
 
-// macOS: the app comes packed (Session Board.app in a .tar.gz). The running one is stopped and
-// replaced. With an Apple Development certificate on this Mac it's signed with that, as the
-// SwiftUI build was, so macOS keeps its Accessibility permission across updates.
-async function installMacApp($, d, run) {
-  const data = await dataDir($)
-  const tmp = data + '/' + d.asset.file + '.download'
-  await run(['mkdir', '-p', data, d.dir])
-  const got = await run(['curl', '-fsSL', '--retry', '2', '-o', tmp, `${RELEASES}/v${d.version}/${d.asset.file}`], 5 * 60 * 1000)
-  if (got.exitCode !== 0) throw new Error('the window app could not be downloaded: ' + oneLine(got.stderr, 120))
-  const sum = String((await run(['shasum', '-a', '256', tmp])).stdout ?? '').trim().split(/\s+/)[0].toLowerCase()
-  if (sum !== d.asset.sha256) {
-    await run(['rm', '-f', tmp]).catch(() => {})
-    throw new Error("the downloaded window app didn't match its checksum, so it wasn't installed")
-  }
-  await run(['pkill', '-x', 'SessionBoard']).catch(() => {})
-  await run(['pkill', '-x', 'session-board']).catch(() => {})
-  await run(['rm', '-rf', d.app])
-  const unpacked = await run(['tar', '-xzf', tmp, '-C', d.dir])
-  await run(['rm', '-f', tmp]).catch(() => {})
-  if (unpacked.exitCode !== 0) throw new Error('the window app could not be unpacked: ' + oneLine(unpacked.stderr, 120))
-  const ids = String((await run(['security', 'find-identity', '-v', '-p', 'codesigning']).catch(() => ({ stdout: '' }))).stdout ?? '')
-  const identity = /\b([0-9A-F]{40})\b "Apple Development/.exec(ids)?.[1]
-  if (identity) await run(['codesign', '--force', '--deep', '-s', identity, d.app]).catch(() => {})
-  await $.fs.write(d.versionFile, d.version)
-}
-
 // Gets the window app ready: built on macOS, downloaded on Windows and Linux. One session at a
 // time (a lease in the store); the others throw "building" and leave it to that one.
 async function readyApp($) {
-  if ((await osOf($)) === 'macos' && !(await macDownloads($))) return { os: 'macos', app: await buildApp($) }
+  if ((await osOf($)) === 'macos') return { os: 'macos', app: await buildApp($) }
   const d = await downloadedApp($)
   if (d.current) return d
   const now = await $.clock.now()
@@ -1273,7 +1258,7 @@ export function register(on) {
     } catch {
       // Without the request the window still starts, following your settings as usual
     }
-    if ((await osOf($)) !== 'macos' || (await macDownloads($))) {
+    if ((await osOf($)) !== 'macos') {
       const d = await downloadedApp($).catch((err) => ({ error: err }))
       if (d.error) return { text: 'Session Board: ' + oneLine(d.error.message, 200) }
       void openBoard($).catch((err) => reportFailure($, err))
@@ -1340,6 +1325,8 @@ export function register(on) {
   on('tool.call', async ($, e, next) => {
     if (!me || e.agentId) return next(e)
     me.step = stepOf(e)
+    // The call a permission prompt would be for, while it waits
+    callInProgress = { tool: e.tool, input: e }
     // A reload in the middle of a turn starts the record as idle; a tool call means it works
     if (me.status === 'idle') me.status = 'working'
     if (e.tool === 'AskUserQuestion' || e.tool === 'ExitPlanMode') {
@@ -1353,6 +1340,7 @@ export function register(on) {
       void summarize($, { onlyIfNew: true })
     }
     const r = await next(e)
+    callInProgress = null
     try {
       trackTasks(e, r)
     } catch {
@@ -1368,21 +1356,14 @@ export function register(on) {
     return r
   })
 
-  // A permission prompt is on screen: the session waits on you until the call goes on.
-  // (tool.check's "ask" is no sign of that: in Auto mode the classifier settles it.)
-  on('classic.PermissionRequest', async ($, e, next) => {
-    if (me) {
-      me.status = 'needs-you'
-      me.ask = askFor(e.tool_name, e.tool_input)
-      publishSoon($)
-    }
-    return next(e)
-  })
-
+  // A permission prompt is on screen (Claude Code's notification says so): the session waits on
+  // you until the call goes on, and the call waiting is the one in progress. The mod never
+  // takes part in the permission decision itself. (tool.check's "ask" is no sign of a prompt:
+  // in Auto mode the classifier settles it.)
   on('classic.Notification', async ($, e, next) => {
     if (me && e.notification_type === 'permission_prompt') {
       me.status = 'needs-you'
-      if (!me.ask) me.ask = 'A permission prompt is open'
+      me.ask = callInProgress ? askFor(callInProgress.tool, callInProgress.input) : me.ask || 'A permission prompt is open'
       publishSoon($)
     }
     return next(e)

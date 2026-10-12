@@ -157,6 +157,39 @@ That's a few small calls per turn, per session, billed to your Claude account li
   it, Session Board's report inbox (a Cloudflare Worker, `reports-worker/`), which files it as an issue in a private
   repo only the team reads. The Feedback buttons open GitHub in your browser for you to send.
 
+## What the mod does on your computer
+
+Everything here is in `hooks/register.js` (the mod) and `hooks/session-title.mjs` (the one command hook).
+
+**What it sends, and where**
+- **Summaries:** the last few requests and replies of a session (about 15,000 characters at most) and its previous list, to Claude through Claude Code's own model call (`$.model.complete`, Sonnet at low effort), billed to your Claude account. Turn them off in Settings.
+- **Naming** (only with "Also rename in Claude Code" on): a session's first request, to Claude the same way, for a short name.
+- **Bug reports, only when you ask** (you say "report", or click Report or a Feedback button): your description, versions, the window's settings, session counts, error messages and a crash's stack, with your home folder and user name removed and nothing from your chats. With the GitHub CLI signed in, to a public issue on this repo; otherwise to Session Board's report inbox (`session-board-reports.kiran-987.workers.dev`, a Cloudflare Worker that files it as an issue in a private repo).
+- **Windows and Linux:** the window app is downloaded from this repo's GitHub release for the plugin's version (`curl`), and checked against the SHA-256 in `app/release.json` before it's installed.
+- Nothing else leaves your computer. There's no analytics.
+
+**Programs it runs, and why**
+- `sh` with `tail`, `sed` and `awk` (macOS, Linux), or `powershell` (Windows): to read the end of a session's saved conversation, without its image data, for the summary and the step under way.
+- `ps` (macOS, Linux), or `powershell` with `Get-CimInstance Win32_Process` (Windows): to find the commands sessions left running, for "Still running".
+- `uname`: to tell macOS from Linux, and the processor.
+- macOS: `xcode-select -p` to check Apple's command-line tools, `sh board/build.sh` to build the window app (it runs `swiftc`, `codesign` and `iconutil`), and `open -g` to start it.
+- Windows and Linux: `curl` to download the window app, `sha256sum` or `Get-FileHash` to check it, `mkdir`, `mv`, `chmod` or `Move-Item`, `taskkill` to stop an old copy before replacing it, then `cmd /c start` or `nohup` to start it.
+
+**What it writes**
+- Each session's record in Claude Code's plugin store (its status, request, step, task list and summary), deleted when the session ends.
+- In the shared folder (`~/Library/Application Support/session-board`, `%APPDATA%\session-board` or `~/.local/share/session-board`): `show-request` (from `/session-board`), `last-error.json` (a failed build, for a report), `built.sha`, and on Linux the downloaded app.
+- macOS: the window app in `~/Applications/Session Board.app`. Windows: `%LOCALAPPDATA%\Programs\Session Board`.
+- It edits no build, start-up, settings or instructions file of yours.
+
+**What its hooks do.** They watch; none of them blocks, changes or answers anything, and none takes part in a permission decision. Each passes its event on unchanged.
+- `session.start`: registers `/session-board`, starts the window app, and starts a check every 30 seconds (catching up sessions that started before the plugin, and noticing commands that ended).
+- `prompt.submit`, `turn.start`, `turn.complete`: note the request, that the session is working, and that the turn ended; start a summary.
+- `tool.call`: notes the step under way and the session's task list (TodoWrite, TaskCreate, TaskUpdate), and that a question or plan approval is on screen.
+- `classic.Notification`: notes that a permission prompt is open, so the board shows the session needs you.
+- `classic.SessionStart` (clear, resume, branch) and `session.end`: start a new record, or delete the old one.
+- `command.run`: answers `/session-board` by showing the window.
+- The command hook (`UserPromptSubmit`, `hooks/session-title.mjs`): with "Also rename in Claude Code" on, sets the session's title with its project in front. It never blocks a prompt.
+
 ## How it works
 
 - **The mod** (`hooks/register.js`) keeps a record for each session in the plugin's shared store.
