@@ -4,10 +4,11 @@
 import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, sessionText, assignColors, inkFor, ago, SWATCHES, isQuiet, Attention, soundFor, popupDetail, NEEDS_YOU, DONE, focusedFrom, parseCrash } from './model.js'
 import { sampleState } from './sample.js'
 import { DEFAULT_SHORTCUT, label as shortcutLabel, Recorder, clash, fromLegacy } from './shortcut.js'
+import { defaultFrame, fits, edgesAt } from './geometry.js'
 
 const tauri = window.__TAURI__
 const invoke = (cmd, args) => (tauri ? tauri.core.invoke(cmd, args) : Promise.resolve(null))
-const VERSION = '0.3.1'
+const VERSION = '0.3.2'
 // Errors go to the app's log, since a webview's console can't be seen
 window.addEventListener('error', (e) => invoke('log', { msg: `board: ${e.message} at ${e.filename}:${e.lineno}` }))
 window.addEventListener('unhandledrejection', (e) => invoke('log', { msg: `board: ${e.reason?.message ?? e.reason}` }))
@@ -258,6 +259,66 @@ async function fitCollapsed(changed = false) {
   savePrefs()
 }
 
+// ---- The window's place and size: each window kind remembers its own; the first time (or when the
+// saved place is off every screen now) it opens at the default for this screen (geometry.js)
+async function workArea() {
+  const mon = await tauri.window.currentMonitor()
+  if (!mon) return null
+  const scale = mon.scaleFactor
+  const a = mon.workArea ?? { position: mon.position, size: mon.size }
+  return { x: a.position.x / scale, y: a.position.y / scale, width: a.size.width / scale, height: a.size.height / scale }
+}
+
+async function placeWindow() {
+  if (!tauri) return
+  const area = await workArea()
+  if (!area) return
+  const key = prefs.regularWindow ? 'regular' : 'floating'
+  const saved = prefs.frames?.[key]
+  const f = fits(saved, area) ? saved : defaultFrame(area, prefs.regularWindow)
+  const w = tauri.window.getCurrentWindow()
+  ui.placing = true
+  await w.setSize(new tauri.dpi.LogicalSize(f.width, prefs.collapsed ? Math.min(f.height, 120) : f.height))
+  await w.setPosition(new tauri.dpi.LogicalPosition(f.x, f.y))
+  setTimeout(() => { ui.placing = false }, 300)
+}
+
+let frameTimer = null
+function rememberFrame() {
+  if (!tauri || ui.placing) return
+  clearTimeout(frameTimer)
+  frameTimer = setTimeout(async () => {
+    const w = tauri.window.getCurrentWindow()
+    const scale = await w.scaleFactor()
+    const pos = (await w.outerPosition()).toLogical(scale)
+    const size = (await w.outerSize()).toLogical(scale)
+    const key = prefs.regularWindow ? 'regular' : 'floating'
+    // A collapsed window's height isn't its height
+    const height = prefs.collapsed ? (prefs.frames?.[key]?.height ?? size.height) : size.height
+    prefs.frames = { ...(prefs.frames ?? {}), [key]: { x: Math.round(pos.x), y: Math.round(pos.y), width: Math.round(size.width), height: Math.round(height) } }
+    savePrefs()
+  }, 400)
+}
+
+// Resizing from any edge or corner of the frameless window (Windows and Linux; a Mac panel has
+// its own), with the cursor that says which way
+const CURSORS = { North: 'ns-resize', South: 'ns-resize', East: 'ew-resize', West: 'ew-resize', NorthEast: 'nesw-resize', SouthWest: 'nesw-resize', NorthWest: 'nwse-resize', SouthEast: 'nwse-resize' }
+function resizeEdges() {
+  if (!tauri || state.platform === 'macos') return
+  document.addEventListener('mousemove', (e) => {
+    const dir = edgesAt(e.clientX, e.clientY, innerWidth, innerHeight, prefs.collapsed)
+    document.documentElement.style.cursor = dir ? CURSORS[dir] : ''
+  })
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    const dir = edgesAt(e.clientX, e.clientY, innerWidth, innerHeight, prefs.collapsed)
+    if (!dir) return
+    e.preventDefault()
+    e.stopPropagation()
+    tauri.window.getCurrentWindow().startResizeDragging(dir)
+  }, true)
+}
+
 // ---- Hide when you switch away: the floating board shows only while Claude is the app in front
 async function followFrontApp() {
   if (!tauri || ui.testing || prefs.regularWindow || !prefs.hideWhenAway || prefs.userHidden) return
@@ -278,6 +339,11 @@ async function followFrontApp() {
 }
 
 // ---- Theme: your pick, else Claude Desktop's, else the system's
+// Linux draws the window's rounded corners in the page (Windows 11 rounds it natively)
+function windowShape() {
+  document.documentElement.classList.toggle('rounded', state.platform === 'linux')
+}
+
 function applyTheme() {
   const pick = prefs.theme ?? ui.claudeTheme
   const dark = pick ? pick === 'dark' : params.get('theme') ? params.get('theme') === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
@@ -507,6 +573,7 @@ function soundsSection() {
 }
 
 function render() {
+  windowShape()
   const dark = applyTheme()
   const p = partition(state.rows, prefs.dismissed)
   const prefixes = sharedPrefixes(p.shown, state.shared.projectNames)
@@ -643,7 +710,7 @@ document.addEventListener('click', (e) => {
     case 'reveal': prefs.collapsed = false; render(); document.querySelector(`[data-card="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }); return
     case 'open': if (row) openSession(row); return
     case 'theme': prefs.theme = v; break
-    case 'window': prefs.regularWindow = v === 'regular'; invoke('set_window_mode', { regular: prefs.regularWindow }); break
+    case 'window': prefs.regularWindow = v === 'regular'; invoke('set_window_mode', { regular: prefs.regularWindow }); placeWindow(); break
     case 'shared': setShared(key, !state.shared[key]); break
     case 'pref': prefs[key] = !prefs[key]; if (key === 'hideWhenAway' || key === 'terminalsCount') { ui.away = false; invoke('show_window', { label: 'board' }) } break
     case 'moment': prefs.soundMoments[Number(el.dataset.m)] = !prefs.soundMoments[Number(el.dataset.m)]; break
@@ -705,8 +772,8 @@ document.addEventListener('contextmenu', (e) => {
 })
 tauri?.event.listen('toasts-count', ({ payload }) => { ui.toastCount = payload; placeToasts() })
 tauri?.event.listen('toast-open', ({ payload }) => { const row = state.rows.find((r) => r.id === payload); if (row) openSession(row) })
-tauri?.window.getCurrentWindow().onMoved(() => placeToasts())
-tauri?.window.getCurrentWindow().onResized(() => placeToasts())
+tauri?.window.getCurrentWindow().onMoved(() => { placeToasts(); rememberFrame() })
+tauri?.window.getCurrentWindow().onResized(() => { placeToasts(); rememberFrame() })
 tauri?.event.listen('menu', ({ payload }) => {
   if (payload === 'settings') { ui.settings = true; render() }
   if (payload === 'report') invoke('plugin:opener|open_url', { url: feedbackUrl('bug') })
@@ -725,7 +792,12 @@ if (tauri) {
   setInterval(() => followFocus().catch(() => {}), 750)
   setTimeout(() => checkCrash().catch(() => {}), 1500)
   // The window kind and size you left it with
-  setTimeout(() => { invoke('set_window_mode', { regular: !!prefs.regularWindow }); fitCollapsed() }, 300)
+  setTimeout(async () => {
+    invoke('set_window_mode', { regular: !!prefs.regularWindow })
+    if (state.platform !== 'macos') await placeWindow().catch(() => {})
+    fitCollapsed()
+  }, 300)
+  setTimeout(resizeEdges, 400)
   loadSounds().then(render)
   // An alert's volume change left behind when the app last quit: put it back
   if (prefs.volumeToRestore != null) restoreVolume(null)

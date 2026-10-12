@@ -1,6 +1,6 @@
 [package]
 name = "session-board"
-version = "0.3.1"
+version = "0.3.2"
 description = "Session Board: every Claude Code session on this computer, in one window"
 authors = ["Kiran Pothana"]
 license = "MIT"
@@ -36,5 +36,5 @@ objc2-application-services = { version = "=0.3.2", default-features = false, fea
 objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFString", "CFArray", "CFBase", "CFNumber", "CFDictionary"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Graphics_Dwm"] }
 

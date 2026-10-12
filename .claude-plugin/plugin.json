@@ -1,7 +1,7 @@
 {
   "name": "session-board",
   "displayName": "Session Board",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A Claude Code mod for macOS: one floating window showing what every Claude Code session is doing (terminal, Remote Control and Claude Desktop), with live summaries, what's waiting on you, popups and one-click jumps.",
   "author": {
     "name": "Kiran Pothana"

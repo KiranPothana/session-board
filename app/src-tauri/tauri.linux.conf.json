@@ -1,0 +1,37 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "board",
+        "title": "Session Board",
+        "width": 330,
+        "height": 705,
+        "minWidth": 280,
+        "minHeight": 120,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "decorations": false,
+        "skipTaskbar": true,
+        "resizable": true,
+        "focus": false,
+        "visible": false,
+        "transparent": true
+      },
+      {
+        "label": "toasts",
+        "url": "toasts.html",
+        "width": 64,
+        "height": 64,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "shadow": false,
+        "visible": false
+      }
+    ]
+  }
+}

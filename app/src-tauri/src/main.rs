@@ -548,6 +548,17 @@ fn main() {
             for label in ["board", "toasts"] {
                 make_panel(app.handle(), label);
             }
+            // Windows 11 rounds a frameless window only when asked (Windows 10 keeps it square)
+            #[cfg(windows)]
+            if let Some(w) = board(app.handle()) {
+                if let Ok(hwnd) = w.hwnd() {
+                    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
+                    let pref = DWMWCP_ROUND;
+                    unsafe {
+                        let _ = DwmSetWindowAttribute(windows::Win32::Foundation::HWND(hwnd.0 as _), DWMWA_WINDOW_CORNER_PREFERENCE, &pref as *const _ as *const _, std::mem::size_of_val(&pref) as u32);
+                    }
+                }
+            }
             if let Some(w) = board(app.handle()) {
                 show_quietly(&w);
             }
