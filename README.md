@@ -115,7 +115,7 @@ claude plugin install session-board@session-board
 Then start a new Claude Code session, or type `/session-board` in one.
 
 - **Mac:** the first time, the plugin builds the window app into `~/Applications/Session Board.app` (under a minute) and opens it. It builds again only when an update changes the app's source.
-- **Windows and Linux:** the first time, the plugin downloads the window app from this repo's release for its version, checks it against the SHA-256 in `app/release.json` (part of the plugin; a download that doesn't match is thrown away), and starts it. Windows: `%LOCALAPPDATA%\Programs\Session Board`. Linux: `~/.local/share/session-board/app`.
+- **Windows and Linux:** the first time, the plugin downloads the window app from this repo's release for its version, checks it against the SHA-256 in `app/release.json` (part of the plugin; a download that doesn't match is thrown away), and starts it. Windows: `%LOCALAPPDATA%\Programs\Session Board`. Linux: `~/.local/share/session-board/app`. When several sessions start together, one installs it: an `install.lock` file in that folder, which only one session can create, holds the others off, and each download goes under a name of its own.
 - Sessions that were already running show up too, with no restart. Once one session runs the plugin, it reads the others' saved conversations every 30 seconds.
 
 To update: `claude plugin update session-board@session-board`.
@@ -173,12 +173,12 @@ Everything here is in `hooks/register.js` (the mod) and `hooks/session-title.mjs
 - `ps` (macOS, Linux), or `powershell` with `Get-CimInstance Win32_Process` (Windows): to find the commands sessions left running, for "Still running".
 - `uname`: to tell macOS from Linux, and the processor.
 - macOS: `xcode-select -p` to check Apple's command-line tools, `sh board/build.sh` to build the window app (it runs `swiftc`, `codesign` and `iconutil`), and `open -g` to start it.
-- Windows and Linux: `curl` to download the window app, `sha256sum` or `Get-FileHash` to check it, `mkdir`, `mv`, `chmod` or `Move-Item`, `taskkill` to stop an old copy before replacing it, then `cmd /c start` or `nohup` to start it.
+- Windows and Linux: `curl` to download the window app, `sha256sum` or `Get-FileHash` to check it, `mkdir`, `mv`, `chmod` or `Move-Item`, `taskkill` to stop an old copy before replacing it, then `cmd /c start` or `nohup` to start it. For the install lock: `ln`, `mv` and `rm` on Linux; on Windows, PowerShell's `[IO.File]::Move` and `Remove-Item`.
 
 **What it writes**
 - Each session's record in Claude Code's plugin store (its status, request, step, task list and summary), deleted when the session ends.
 - In the shared folder (`~/Library/Application Support/session-board`, `%APPDATA%\session-board` or `~/.local/share/session-board`): `show-request` (from `/session-board`), `last-error.json` (a failed build, for a report), `built.sha`, and on Linux the downloaded app.
-- macOS: the window app in `~/Applications/Session Board.app`. Windows: `%LOCALAPPDATA%\Programs\Session Board`.
+- macOS: the window app in `~/Applications/Session Board.app`. Windows: `%LOCALAPPDATA%\Programs\Session Board`. Windows and Linux: `install.lock` in the app's folder while an install runs, removed after.
 - It edits no build, start-up, settings or instructions file of yours.
 
 **What its hooks do.** They watch; none of them blocks, changes or answers anything, and none takes part in a permission decision. Each passes its event on unchanged.

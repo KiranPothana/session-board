@@ -1125,12 +1125,92 @@ async function downloadedApp($) {
   return { os, dir, app, asset, versionFile, version: release.version, current: have === release.version && (await $.fs.exists(app)) }
 }
 
-async function installApp($, d) {
+// One install at a time across sessions, which can all start together. The lock is a file in
+// the app's folder, made by an operation that fails when the file is already there (a hard link
+// on Linux, a move that doesn't overwrite on Windows), so only one session gets it. It holds its
+// owner's token and the time it runs out: a lock left by a session that died is taken over once
+// it has run out, and a session removes a lock only while it still holds its own token.
+async function fileOp($, os, op, from, to) {
+  const ps = (script) => powershell($, script, 20000)
+  let r
+  if (op === 'remove') r = os === 'windows' ? await ps(`Remove-Item -Force -LiteralPath ${psQuote(from)}`) : await $.process.run(['rm', '-f', from], { timeoutMs: 20000 })
+  // Put `from` at `to`, failing when `to` is there
+  else if (op === 'place') r = os === 'windows' ? await ps(`try { [IO.File]::Move(${psQuote(from)}, ${psQuote(to)}) } catch { exit 1 }`) : await $.process.run(['ln', from, to], { timeoutMs: 20000 })
+  // Move `from` to `to`, a name no other session uses, failing when `from` is gone
+  else r = os === 'windows' ? await ps(`try { [IO.File]::Move(${psQuote(from)}, ${psQuote(to)}) } catch { exit 1 }`) : await $.process.run(['mv', from, to], { timeoutMs: 20000 })
+  return r?.exitCode === 0
+}
+
+async function lockHolder($, path) {
+  let text
+  try {
+    text = String(await $.fs.read(path))
+  } catch {
+    return null
+  }
+  try {
+    const held = JSON.parse(text)
+    return { token: String(held.token ?? ''), until: Number(held.until) || 0 }
+  } catch {
+    // Not a lock this code wrote: out of date
+    return { token: text, until: 0 }
+  }
+}
+
+// Puts a file made under a name of its own at `to` without overwriting, then clears the name
+// (on Linux the link leaves it; on Windows the move took it)
+async function placeOnce($, os, from, to) {
+  const placed = await fileOp($, os, 'place', from, to)
+  if (os !== 'windows' || !placed) await fileOp($, os, 'remove', from).catch(() => {})
+  return placed
+}
+
+// Moves the lock aside under a name of its own, so of two sessions only one gets it, and keeps it
+// only when it still holds `token`; another session's lock is put back. True when it was kept.
+async function takeLock($, os, lock, token) {
+  const aside = `${lock}.${crypto.randomUUID()}.old`
+  if (!(await fileOp($, os, 'move', lock, aside))) return false
+  const held = await lockHolder($, aside)
+  if (held?.token === token) {
+    await fileOp($, os, 'remove', aside).catch(() => {})
+    return true
+  }
+  await placeOnce($, os, aside, lock)
+  return false
+}
+
+async function lockInstall($, d) {
+  const lock = d.dir + '/install.lock'
+  const token = crypto.randomUUID()
+  for (let i = 0; i < 3; i++) {
+    const mine = `${lock}.${token}`
+    await $.fs.write(mine, JSON.stringify({ token, until: (await $.clock.now()) + BUILD_MS }))
+    if (await placeOnce($, d.os, mine, lock)) return { lock, token }
+    const held = await lockHolder($, lock)
+    // Released since: try again. Held by a session still in time: leave it to that one.
+    if (!held) continue
+    if (held.until > (await $.clock.now())) return null
+    // Run out: whoever moves it aside first takes it over
+    if (!(await takeLock($, d.os, lock, held.token))) return null
+  }
+  return null
+}
+
+async function unlockInstall($, d, held) {
+  await takeLock($, d.os, held.lock, held.token).catch(() => {})
+}
+
+async function installApp($, d, held) {
   const run = (argv, timeoutMs = 60000) => $.process.run(argv, { timeoutMs })
   const ps = (script, timeoutMs = 60000) => powershell($, script, timeoutMs)
-  const tmp = d.app + '.download'
   if (d.os === 'windows') await ps(`New-Item -ItemType Directory -Force -Path ${psQuote(d.dir)} | Out-Null`)
   else await run(['mkdir', '-p', d.dir])
+  // Downloads left by a session that stopped part way (each install downloads under a name of
+  // its own); only the lock's holder gets here
+  for (const f of await $.fs.list(d.dir).catch(() => [])) {
+    if (f.name.endsWith('.download')) await fileOp($, d.os, 'remove', d.dir + '/' + f.name).catch(() => {})
+  }
+  const tmp = `${d.app}.${held.token}.download`
   const got = await run(['curl', '-fsSL', '--retry', '2', '-o', tmp, `${RELEASES}/v${d.version}/${d.asset.file}`], 5 * 60 * 1000)
   if (got.exitCode !== 0) throw new Error('the window app could not be downloaded: ' + oneLine(got.stderr, 120))
   const sum = d.os === 'windows'
@@ -1140,6 +1220,11 @@ async function installApp($, d) {
     if (d.os === 'windows') await ps(`Remove-Item -Force -LiteralPath ${psQuote(tmp)}`).catch(() => {})
     else await run(['rm', '-f', tmp]).catch(() => {})
     throw new Error("the downloaded window app didn't match its checksum, so it wasn't installed")
+  }
+  // Still this session's turn? A session whose lock ran out and was taken over leaves it to the new holder
+  if ((await lockHolder($, held.lock))?.token !== held.token) {
+    await fileOp($, d.os, 'remove', tmp).catch(() => {})
+    throw new Error('building')
   }
   if (d.os === 'windows') {
     // A running copy holds its file: stop it, then put the new one in place
@@ -1153,19 +1238,20 @@ async function installApp($, d) {
 }
 
 // Gets the window app ready: built on macOS, downloaded on Windows and Linux. One session at a
-// time (a lease in the store); the others throw "building" and leave it to that one.
-async function readyApp($) {
+// time (build.sh's lock on macOS, the install lock elsewhere); the others throw "building" and
+// leave it to that one.
+export async function readyApp($) {
   if ((await osOf($)) === 'macos') return { os: 'macos', app: await buildApp($) }
-  const d = await downloadedApp($)
+  let d = await downloadedApp($)
   if (d.current) return d
-  const now = await $.clock.now()
-  const lease = await $.store.get(BUILD_LEASE)
-  if (lease && lease.id !== me?.id && lease.until > now) throw new Error('building')
-  await $.store.set(BUILD_LEASE, { id: me?.id ?? '', until: now + BUILD_MS })
+  const held = await lockInstall($, d)
+  if (!held) throw new Error('building')
   try {
-    await installApp($, d)
+    // Another session may have put it in place while this one waited for the lock
+    d = await downloadedApp($)
+    if (!d.current) await installApp($, d, held)
   } finally {
-    await $.store.delete(BUILD_LEASE).catch(() => {})
+    await unlockInstall($, d, held)
   }
   return d
 }

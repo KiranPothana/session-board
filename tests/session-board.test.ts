@@ -1,4 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
+// A second copy of the mod, standing for another session on the same computer
+import { readyApp as otherSession } from '../hooks/register.js'
 
 const HOME = '/home/k'
 const ME = 'sess-me'
@@ -52,6 +54,54 @@ type Opts = {
   toasts?: string[]
   // The name the model gives a new session
   title?: string
+  // A disk the install reads and changes, shared by every copy of the mod in a test: fs calls,
+  // and the commands that make, move and remove files (ln, mv, rm, curl; PowerShell's on Windows)
+  disk?: Disk
+}
+
+// The files an install makes, by path. A Windows path the engine resolved under the working
+// folder (a C: path isn't absolute on the Mac running the tests) is kept from its C: on.
+class Disk {
+  files = new Map<string, string>()
+  // Downloads take this long, so two sessions' installs overlap
+  downloadMs = 20
+  downloads: string[] = []
+  key = (path: string) => String(path).replace(/^.*?(?=C:\/)/, '')
+  has = (path: string) => this.files.has(this.key(path))
+  get = (path: string) => this.files.get(this.key(path))
+  set = (path: string, text: string) => void this.files.set(this.key(path), text)
+  delete = (path: string) => this.files.delete(this.key(path))
+  list = (dir: string) =>
+    [...this.files.keys()].filter((f) => f.startsWith(this.key(dir) + '/') && !f.slice(this.key(dir).length + 1).includes('/'))
+      .map((f) => ({ name: f.split('/').pop()!, kind: 'file', size: 1, mtimeMs: 0, isLink: false }))
+  // Each command acts on the files in one step, as the OS's own call does
+  run(argv: string[]): Promise<{ exitCode: number; stdout?: string }> | undefined {
+    const ok = { exitCode: 0 }
+    const fail = { exitCode: 1 }
+    const move = (from: string, to: string, overwrite: boolean) => {
+      if (!this.has(from) || (!overwrite && this.has(to))) return fail
+      this.set(to, this.get(from)!)
+      this.delete(from)
+      return ok
+    }
+    const now = (r: { exitCode: number; stdout?: string }) => Promise.resolve(r)
+    if (argv[0] === 'ln') return now(this.has(argv[2]) || !this.has(argv[1]) ? fail : (this.set(argv[2], this.get(argv[1])!), ok))
+    if (argv[0] === 'mv') return now(argv[1] === '-f' ? move(argv[2], argv[3], true) : move(argv[1], argv[2], false))
+    if (argv[0] === 'rm') return now((this.delete(argv[2]), ok))
+    if (argv[0] === 'curl') {
+      const out = argv[argv.indexOf('-o') + 1]
+      this.downloads.push(out)
+      return new Promise((r) => setTimeout(() => (this.set(out, 'app ' + argv.at(-1)), r(ok)), this.downloadMs))
+    }
+    if (argv[0] === 'powershell') {
+      const script = argv.at(-1)!
+      const args = [...script.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"))
+      if (script.startsWith('try { [IO.File]::Move')) return now(move(args[0], args[1], false))
+      if (script.startsWith('Move-Item')) return now(move(args[0], args[1], true))
+      if (script.startsWith('Remove-Item')) return now((this.delete(args[0]), ok))
+    }
+    return undefined
+  }
 }
 
 // Stub everything the mod asks Claude Code for; returns the shared store
@@ -99,23 +149,27 @@ function stubEngine(on: any, opts: Opts = {}) {
     } }
   })
   const registry = opts.registry ?? REGISTRY
-  on('fs.list', () => ({
-    value: Object.keys(registry).map((name) => ({ name, kind: 'file', size: 100, isLink: false })),
+  on('fs.list', ($: any, e: any) => ({
+    value: opts.disk && e.path && !String(e.path).includes('sessions') ? opts.disk.list(e.path) : Object.keys(registry).map((name) => ({ name, kind: 'file', size: 100, isLink: false })),
   }))
   on('fs.read', ($: any, e: any) => {
     const path = String(e.path)
+    if (opts.disk?.has(path)) return { value: opts.disk.get(path) }
+    if (opts.disk && /install\.lock/.test(path)) return { deny: 'no such file' }
     for (const [end, text] of Object.entries(opts.files ?? {})) if (path.endsWith(end)) return { value: text }
     if (path === DATA + '/removed.json') return opts.removed ? { value: JSON.stringify(opts.removed) } : { deny: 'no such file' }
     if (path === DATA + '/settings.json') return opts.settings ? { value: JSON.stringify(opts.settings) } : { deny: 'no such file' }
     if (path === DATA + '/built.sha') return app === 'missing' ? { deny: 'no such file' } : { value: app === 'current' ? BUILT + '\n' : 'old:old\n' }
     return { value: JSON.stringify(registry[path.split('/').pop()!]) }
   })
-  on('fs.exists', ($: any, e: any) => ({ value: opts.exists ? opts.exists(e.path) : e.path === APP && app !== 'missing' }))
+  on('fs.exists', ($: any, e: any) => ({ value: opts.disk?.has(e.path) || (opts.exists ? opts.exists(e.path) : e.path === APP && app !== 'missing') }))
   on('process.run', ($: any, e: any) => {
     opts.runs?.push(e.argv)
     const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '' } })
     const custom = opts.run?.(e.argv)
     if (custom) return { value: { stdout: '', stderr: '', ...custom } }
+    const done = opts.disk?.run(e.argv)
+    if (done) return done.then((r) => ({ value: { stdout: '', stderr: '', ...r } }))
     // The running-jobs check, and a saved conversation's end (tail, without the image data)
     if (e.argv[0] === 'sh' && e.argv[1] === '-c' && String(e.argv[2]).startsWith('ps ')) return ok(opts.ps ?? '')
     if (e.argv[0] === 'sh' && e.argv[1] === '-c') return ok(opts.tailFor?.(Number(e.argv[4])) ?? opts.tail ?? '')
@@ -132,6 +186,7 @@ function stubEngine(on: any, opts: Opts = {}) {
   })
   on('fs.write', ($: any, e: any) => {
     opts.writes?.push([e.path, e.text])
+    opts.disk?.set(e.path, e.text)
     return { value: undefined }
   })
   on('fs.stat', async () => {
@@ -1165,14 +1220,14 @@ test('on Windows the app is downloaded, checked against its checksum, put in pla
   const runs: string[][] = []
   const writes: string[][] = []
   stubEngine(on, {
-    runs, writes, env: WINDOWS, files: { '/app/release.json': RELEASE }, exists: () => false,
+    runs, writes, env: WINDOWS, files: { '/app/release.json': RELEASE }, exists: () => false, disk: new Disk(),
     run: (argv) => (argv[0] === 'powershell' && argv.at(-1)!.includes('Get-FileHash') ? { exitCode: 0, stdout: SUM.toUpperCase() + '\r\n' } : undefined),
   })
   await start($)
   await waitFor(() => runs.some((r) => r[0] === 'cmd'))
   const curl = runs.find((r) => r[0] === 'curl')!
   expect(curl.at(-1)).toBe('https://github.com/KiranPothana/session-board/releases/download/v0.2.0/session-board.exe')
-  expect(curl).toContain(WIN_DIR + '/session-board.exe.download')
+  expect(curl.some((a) => /^C:\/Users\/k\/AppData\/Local\/Programs\/Session Board\/session-board\.exe\.[0-9a-f-]{36}\.download$/.test(a))).toBe(true)
   expect(runs.some((r) => r[0] === 'powershell' && r.at(-1)!.includes('Move-Item'))).toBe(true)
   // (On this test's Mac a C: path isn't absolute, so the engine puts it under the working folder)
   expect(writes.some(([path, text]) => path.endsWith(WIN_DIR + '/version.txt') && text === '0.2.0')).toBe(true)
@@ -1185,7 +1240,7 @@ test("a download that doesn't match its checksum is thrown away, and says so", a
   const runs: string[][] = []
   const toasts: string[] = []
   stubEngine(on, {
-    runs, toasts, env: WINDOWS, files: { '/app/release.json': RELEASE }, exists: () => false,
+    runs, toasts, env: WINDOWS, files: { '/app/release.json': RELEASE }, exists: () => false, disk: new Disk(),
     run: (argv) => (argv[0] === 'powershell' && argv.at(-1)!.includes('Get-FileHash') ? { exitCode: 0, stdout: 'B'.repeat(64) } : undefined),
   })
   await start($)
@@ -1198,8 +1253,9 @@ test("a download that doesn't match its checksum is thrown away, and says so", a
 
 test('on Linux the AppImage is downloaded, checked, made runnable and started on its own', async ($, on) => {
   const runs: string[][] = []
+  const disk = new Disk()
   stubEngine(on, {
-    runs, files: { '/app/release.json': RELEASE }, exists: () => false,
+    runs, files: { '/app/release.json': RELEASE }, exists: () => false, disk,
     run: (argv) => {
       if (argv[0] === 'uname') return { exitCode: 0, stdout: argv[1] === '-s' ? 'Linux\n' : 'x86_64\n' }
       if (argv[0] === 'sha256sum') return { exitCode: 0, stdout: SUM + '  file\n' }
@@ -1210,8 +1266,104 @@ test('on Linux the AppImage is downloaded, checked, made runnable and started on
   const dir = HOME + '/.local/share/session-board/app'
   await waitFor(() => runs.some((r) => r[0] === 'sh' && String(r[2]).includes('nohup')))
   expect(runs.find((r) => r[0] === 'curl')!.at(-1)).toBe('https://github.com/KiranPothana/session-board/releases/download/v0.2.0/Session-Board.AppImage')
-  expect(runs).toContainEqual(['mv', '-f', dir + '/Session-Board.AppImage.download', dir + '/Session-Board.AppImage'])
+  const put = runs.find((r) => r[0] === 'mv' && r[1] === '-f')!
+  expect(put[2]).toMatch(/\/Session-Board\.AppImage\.[0-9a-f-]{36}\.download$/)
+  expect(put[3]).toBe(dir + '/Session-Board.AppImage')
+  expect(disk.has(dir + '/Session-Board.AppImage')).toBe(true)
   expect(runs).toContainEqual(['chmod', '+x', dir + '/Session-Board.AppImage'])
   expect(runs.find((r) => r[0] === 'sh' && String(r[2]).includes('nohup'))!.at(-1)).toBe(dir + '/Session-Board.AppImage')
 })
 
+
+// Two sessions on one Linux computer, each a copy of the mod's install (the copy imported above)
+// with the calls it makes answered from one shared disk, as the same files would answer them
+const LINUX_DIR = HOME + '/.local/share/session-board/app'
+const LINUX_APP = LINUX_DIR + '/Session-Board.AppImage'
+const time = { now: 1_000_000 }
+const linuxSession = (disk: Disk) => ({
+  env: { get: async (name: string) => ({ HOME } as Record<string, string>)[name] },
+  clock: { now: async () => time.now },
+  plugin: { root: '/plugin' },
+  fs: {
+    read: async (path: string) => {
+      if (path.endsWith('/app/release.json')) return RELEASE
+      if (!disk.has(path)) throw new Error('no such file')
+      return disk.get(path)
+    },
+    write: async (path: string, text: string) => disk.set(path, text),
+    exists: async (path: string) => disk.has(path),
+    list: async (path: string) => disk.list(path),
+  },
+  process: {
+    run: async (argv: string[]) => {
+      if (argv[0] === 'uname') return { exitCode: 0, stdout: argv[1] === '-s' ? 'Linux\n' : 'x86_64\n', stderr: '' }
+      if (argv[0] === 'sha256sum') return { exitCode: 0, stdout: SUM + '  file\n', stderr: '' }
+      return { stdout: '', stderr: '', ...((await disk.run(argv)) ?? { exitCode: 0 }) }
+    },
+  },
+})
+const leftovers = (disk: Disk) => [...disk.files.keys()].filter((f) => f.startsWith(LINUX_DIR + '/') && f !== LINUX_APP && !f.endsWith('/version.txt'))
+
+test('two sessions installing the app together download it once, and leave no lock or download behind', async () => {
+  time.now = 1_000_000
+  const disk = new Disk()
+  const [a, b] = await Promise.allSettled([otherSession(linuxSession(disk)), otherSession(linuxSession(disk))])
+  // One installs; the other leaves it to that one
+  expect([a.status, b.status].sort()).toEqual(['fulfilled', 'rejected'])
+  expect(((a.status === 'rejected' ? a : b) as PromiseRejectedResult).reason.message).toBe('building')
+  expect(disk.downloads.length).toBe(1)
+  expect(disk.get(LINUX_APP)).toContain('/v0.2.0/Session-Board.AppImage')
+  expect(disk.get(LINUX_DIR + '/version.txt')).toBe('0.2.0')
+  expect(leftovers(disk)).toEqual([])
+})
+
+test('two sessions updating the app together download the new version once', async () => {
+  time.now = 1_000_000
+  const disk = new Disk()
+  disk.set(LINUX_APP, 'app 0.1.0')
+  disk.set(LINUX_DIR + '/version.txt', '0.1.0')
+  const results = await Promise.allSettled([otherSession(linuxSession(disk)), otherSession(linuxSession(disk))])
+  expect(results.filter((r) => r.status === 'fulfilled').length).toBe(1)
+  expect(disk.downloads.length).toBe(1)
+  expect(disk.get(LINUX_APP)).toContain('/v0.2.0/')
+  expect(disk.get(LINUX_DIR + '/version.txt')).toBe('0.2.0')
+  expect(leftovers(disk)).toEqual([])
+  // A session after them finds it current and downloads nothing
+  await otherSession(linuxSession(disk))
+  expect(disk.downloads.length).toBe(1)
+})
+
+test('a lock held by a session still in time is left alone; one left by a session that died is taken over', async () => {
+  time.now = 1_000_000
+  const disk = new Disk()
+  disk.set(LINUX_DIR + '/install.lock', JSON.stringify({ token: 'live', until: time.now + 60_000 }))
+  await expect(otherSession(linuxSession(disk))).rejects.toThrow('building')
+  expect(disk.downloads.length).toBe(0)
+  expect(JSON.parse(disk.get(LINUX_DIR + '/install.lock')!).token).toBe('live')
+  disk.set(LINUX_DIR + '/install.lock', JSON.stringify({ token: 'dead', until: time.now - 1 }))
+  // A download it left part way is cleared too
+  disk.set(LINUX_APP + '.dead.download', 'half')
+  await otherSession(linuxSession(disk))
+  expect(disk.downloads.length).toBe(1)
+  expect(disk.get(LINUX_DIR + '/version.txt')).toBe('0.2.0')
+  expect(leftovers(disk)).toEqual([])
+})
+
+test('a session whose lock ran out and was taken over does not put its download in place', async () => {
+  time.now = 1_000_000
+  const disk = new Disk()
+  disk.downloadMs = 60
+  const slow = otherSession(linuxSession(disk))
+  void slow.catch(() => {})
+  await waitFor(() => disk.downloads.length === 1)
+  // Past the lock's time: the next session takes it over, while the first still downloads
+  time.now += 10 * 60 * 1000 + 1
+  const next = otherSession(linuxSession(disk))
+  await expect(slow).rejects.toThrow('building')
+  await next
+  expect(disk.downloads.length).toBe(2)
+  // Only the new holder's download was put in place; the first one's was thrown away
+  expect(disk.get(LINUX_DIR + '/version.txt')).toBe('0.2.0')
+  expect(disk.has(LINUX_APP)).toBe(true)
+  expect(leftovers(disk)).toEqual([])
+})

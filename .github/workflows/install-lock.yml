@@ -1,0 +1,48 @@
+# The install lock in hooks/register.js (fileOp) leans on each OS refusing to put a file where one
+# already is, and refusing to move one that is gone. The mod's tests stand in for the OS, so this
+# checks the real commands on Windows and Linux, as the mod runs them.
+name: Install lock
+
+on:
+  push:
+    branches: [main]
+    paths: ['hooks/register.js', '.github/workflows/install-lock.yml']
+  pull_request:
+    paths: ['hooks/register.js', '.github/workflows/install-lock.yml']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: A move doesn't overwrite, and fails once the file is gone
+        shell: powershell
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'lock'
+          New-Item -ItemType Directory -Force -Path $d | Out-Null
+          Set-Content -NoNewline -Path "$d/a" -Value 'a'
+          Set-Content -NoNewline -Path "$d/b" -Value 'b'
+          $move = { param($from, $to) powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { [IO.File]::Move('$from', '$to') } catch { exit 1 }"; $LASTEXITCODE }
+          if ((& $move "$d/a" "$d/install.lock") -ne 0) { throw 'the first move should make the lock' }
+          if ((& $move "$d/b" "$d/install.lock") -ne 1) { throw 'a second move must not overwrite the lock' }
+          if ((Get-Content -Raw "$d/install.lock") -ne 'a') { throw 'the lock was overwritten' }
+          if ((& $move "$d/install.lock" "$d/aside") -ne 0) { throw 'moving the lock aside should work' }
+          if ((& $move "$d/install.lock" "$d/aside2") -ne 1) { throw 'moving a lock that is gone must fail' }
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-Item -Force -LiteralPath '$d/aside'"
+          if (Test-Path "$d/aside") { throw 'remove failed' }
+          'ok'
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: A link doesn't overwrite, and a move fails once the file is gone
+        run: |
+          d=$(mktemp -d)
+          printf a > "$d/a"; printf b > "$d/b"
+          ln "$d/a" "$d/install.lock"
+          if ln "$d/b" "$d/install.lock" 2>/dev/null; then echo 'a second link must not overwrite the lock'; exit 1; fi
+          [ "$(cat "$d/install.lock")" = a ]
+          mv "$d/install.lock" "$d/aside"
+          if mv "$d/install.lock" "$d/aside2" 2>/dev/null; then echo 'moving a lock that is gone must fail'; exit 1; fi
+          rm -f "$d/aside"
+          echo ok
