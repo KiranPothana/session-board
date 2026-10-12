@@ -382,7 +382,8 @@ function card(row, n, prefix, dark) {
     if (l.kind === 'request') return `<div class="request">${esc(l.text)}</div>`
     if (l.kind === 'caption') return `<div class="caption">${esc(l.text)}</div>`
     const rm = l.removable ? `<button class="rm" data-action="remove-line" data-id="${esc(row.id)}" data-text="${esc(l.text)}" title="Remove this line; the summary won't add it back">✕</button>` : ''
-    return `<div class="line ${l.kind}" data-copy="${esc(l.text)}"><span class="g">${l.kind === 'doing' ? '▶' : esc(l.glyph ?? '')}</span><span class="t">${esc(l.text)}</span>${rm}</div>`
+    const tip = l.all ? ` title="${esc(l.all.join('\n'))}"` : ''
+    return `<div class="line ${l.kind}" data-copy="${esc(l.text)}"${tip}><span class="g">${l.kind === 'doing' ? '▶' : esc(l.glyph ?? '')}</span><span class="t">${esc(l.text)}</span>${rm}</div>`
   }).join('')
   const open = ui.openRemoved.has(row.id)
   const removedBlock = removed.length

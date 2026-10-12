@@ -449,9 +449,34 @@ function jobLabel(command) {
   return 'a command'
 }
 
-// The commands each session still has running, as labels by session id. Claude Code runs a
-// command in a shell started from the session's shell snapshot, named by when it was made (the
-// session's first command): the session is the live one that started last before that.
+// The command a session ran, read from its shell's command line: Claude Code runs it as
+// `… && eval '<command>' < /dev/null && pwd -P …`. Its key (spaces collapsed, the first 200
+// characters) is how a running shell is matched to the description Claude gave the command,
+// here and in the windows, which read it the same way.
+function commandOf(line) {
+  const start = line.indexOf("eval '")
+  if (start < 0) return ''
+  const end = line.lastIndexOf("' < /dev/null")
+  const raw = end > start ? line.slice(start + 6, end) : line.slice(start + 6)
+  return raw.split(`'"'"'`).join("'")
+}
+const commandKey = (command) => String(command).replace(/\s+/g, ' ').trim().slice(0, 200)
+
+// A command's description as the board says it: "Run the browser tests" → "run the browser tests"
+const asPhrase = (text) => (/^[A-Z][a-z]/.test(text) ? text[0].toLowerCase() + text.slice(1) : text)
+
+// Labels for a session's running commands: the description Claude gave each when it ran it
+// (from the session's conversation, `commands`, by key), else what the command line suggests
+function describeJobs(jobs, commands = {}) {
+  return jobs.map((j) => ({ ...j, label: commands[j.key] ? asPhrase(commands[j.key]) : j.label }))
+}
+
+// The running commands Claude described, by key: what the record keeps for the windows
+const describedOnly = (jobs, commands = {}) => Object.fromEntries(jobs.filter((j) => commands[j.key]).map((j) => [j.key, asPhrase(commands[j.key])]))
+
+// The commands each session still has running, by session id: { label, key } each. Claude Code
+// runs a command in a shell started from the session's shell snapshot, named by when it was made
+// (the session's first command): the session is the live one that started last before that.
 const JOBS_CMD = "ps -axo command= | grep '/.claude/shell-snapshots/snapshot-' | grep -v grep"
 async function runningJobs($, registry) {
   const jobs = new Map()
@@ -463,7 +488,12 @@ async function runningJobs($, registry) {
     const made = /[\\/]\.claude[\\/]shell-snapshots[\\/]snapshot-[a-z]+-(\d{13})-/.exec(line)
     if (!made) continue
     const owner = starts.filter((x) => x.startedAt <= Number(made[1])).sort((a, b) => b.startedAt - a.startedAt)[0]
-    if (owner) jobs.set(owner.id, [...(jobs.get(owner.id) ?? []), jobLabel(line)])
+    if (!owner) continue
+    const key = commandKey(commandOf(line))
+    const list = jobs.get(owner.id) ?? []
+    // One command can show as more than one process (a subshell): count it once
+    if (key && list.some((j) => j.key === key)) continue
+    jobs.set(owner.id, [...list, { label: jobLabel(line), key }])
   }
   return jobs
 }
@@ -555,7 +585,9 @@ async function summarize($, { onlyIfNew = false } = {}) {
     const latestReply = exchanges[exchanges.length - 1]?.reply ?? ''
     if (onlyIfNew && !pendingAsk && me.summaryReply !== undefined && latestReply === me.summaryReply) return
     await syncRegistry($).catch(() => {})
-    const jobs = [...((await runningJobs($, liveReg)).get(me.id) ?? []), ...backgroundLabels(me.agentsRunning, me.workflowsRunning)]
+    const running = describeJobs((await runningJobs($, liveReg)).get(me.id) ?? [], own.commands)
+    me.runningLabels = describedOnly(running, own.commands)
+    const jobs = [...running.map((j) => j.label), ...backgroundLabels(me.agentsRunning, me.workflowsRunning)]
     me.jobsKey = [...jobs].sort().join(',')
     me.summary = await summarizeExchanges($, me.id, exchanges.slice(-EXCHANGES), pendingAsk, me.summary, me.status !== 'idle', jobs)
     me.summaryReply = latestReply
@@ -735,6 +767,8 @@ function exchangesFromTranscript(tail) {
   // The assistant's questions (AskUserQuestion) and plans (ExitPlanMode), by tool call id: the
   // user's answer to one comes back as that call's result, not as a typed message
   const asked = new Map()
+  // The commands it ran, by key, with the description it gave each
+  const commands = {}
   const startExchange = (ask, midTurn = false) => {
     // The same request recorded twice (queued, then delivered) is one exchange
     if (ask && out[out.length - 1]?.ask !== ask) out.push({ ask, parts: [], lastTool: null, midTurn })
@@ -779,6 +813,10 @@ function exchangesFromTranscript(tail) {
         // Thinking it shows as it works (stored empty when it isn't shown): it can hold an answer
         if (b?.type === 'thinking' && b.thinking?.trim()) x.parts.push({ text: b.thinking, tool: false, note: true })
         if (b?.type === 'tool_use') {
+          // The description Claude gave a command it ran, for when it's still running
+          if ((b.name === 'Bash' || b.name === 'Monitor') && typeof b.input?.command === 'string' && typeof b.input?.description === 'string' && b.input.description.trim()) {
+            commands[commandKey(b.input.command)] = oneLine(b.input.description, 120)
+          }
           x.parts.push({ text: '', tool: true })
           x.lastTool = b
           pendingTool = b
@@ -795,7 +833,7 @@ function exchangesFromTranscript(tail) {
   const last = out[out.length - 1]
   const step = last?.lastTool ? stepOf({ tool: last.lastTool.name, ...(last.lastTool.input ?? {}) }) : ''
   return { exchanges: asExchanges(out), step, count: out.length, ended, agents: [...running.values()].filter((r) => r.kind === 'agent').length,
-    workflows: [...running.values()].filter((r) => r.kind === 'workflow').length, pendingTool, title: customTitle || title }
+    workflows: [...running.values()].filter((r) => r.kind === 'workflow').length, pendingTool, title: customTitle || title, commands }
 }
 
 // A saved conversation's last exchanges, reading back until it has `want` requests (or the
@@ -841,7 +879,7 @@ async function checkOwnJobs($) {
     return summarize($)
   }
   if (!me.summary) return
-  const mine = [...((await runningJobs($, registry)).get(me.id) ?? []), ...backgroundLabels(own.agents, own.workflows)].sort().join(',')
+  const mine = [...describeJobs((await runningJobs($, registry)).get(me.id) ?? [], own.commands).map((j) => j.label), ...backgroundLabels(own.agents, own.workflows)].sort().join(',')
   if (me.jobsKey === undefined || me.jobsKey !== mine) await summarize($)
   else if ((own.agents ?? 0) !== (me.agentsRunning ?? 0) || (own.workflows ?? 0) !== (me.workflowsRunning ?? 0)) {
     me.agentsRunning = own.agents ?? 0
@@ -924,8 +962,9 @@ async function catchUp($) {
     if (id === me.id || !reg.cwd) continue
     const rec = await $.store.get(PREFIX + id)
     if (rec && !rec.shadow) continue
-    const sessionJobs = [...(jobs.get(id) ?? [])]
-    const jobsKey = [...sessionJobs].sort().join(',')
+    const running = jobs.get(id) ?? []
+    let sessionJobs = running.map((j) => j.label)
+    let jobsKey = [...sessionJobs].sort().join(',')
     // A record from before jobs were tracked counts as changed once, so it's checked against them
     const jobsChanged = rec?.jobsKey === undefined ? !!rec?.summary : rec.jobsKey !== jobsKey
     const path = transcriptPath(home, reg)
@@ -942,13 +981,16 @@ async function catchUp($) {
     if (seenTranscripts.get(id) === mark && !jobsChanged && !statusMoved) continue
     seenTranscripts.set(id, mark)
     // The latest request and step need only the end; a summary reads further back
-    const { exchanges: recent, step, ended, agents, workflows, pendingTool, title } = await readExchanges($, path, 1)
+    const { exchanges: recent, step, ended, agents, workflows, pendingTool, title, commands } = await readExchanges($, path, 1)
+    // Its running commands by the descriptions it gave them
+    const described = describeJobs(running, commands)
+    sessionJobs = described.map((j) => j.label)
     const latest = recent[recent.length - 1]
     // Working: "busy" or "shell" while the turn goes on. The registry keeps saying so after
     // the turn has ended while a command or a background agent it started still runs: the
     // conversation's end of turn decides. "waiting" is waiting on the user.
     const busy = !ended && (reg.status === 'busy' || reg.status === 'shell')
-    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, title: title || rec?.title || '', ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
+    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, runningLabels: describedOnly(running, commands), step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, title: title || rec?.title || '', ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
     // Background agents count as jobs too, for the summary and for noticing when they finish
     sessionJobs.push(...backgroundLabels(agents, workflows))
     if (latest) next.request = oneLine(latest.ask, 140)

@@ -102,6 +102,8 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
       request: rec?.request ?? '',
       ask: status === 'needs-you' ? (rec?.ask ?? '') : '',
       agentsRunning: rec?.agentsRunning ?? 0,
+      // The descriptions Claude gave the commands it still runs, by command key (from the mod)
+      runningLabels: rec?.runningLabels ?? {},
       workflowsRunning: rec?.workflowsRunning ?? 0,
       startedAt: reg.startedAt ?? 0,
     })
@@ -158,15 +160,23 @@ export function sharedPrefixes(shown, projectNames = true) {
   return out
 }
 
-// "Browser tests still running · 6m"
+// What a session still runs, each by the description Claude gave it (else what its command line
+// suggests), the longest-running first, then workflows and background agents
+export function runningItems(row, jobs = []) {
+  const labels = row.runningLabels ?? {}
+  const items = [...new Set([...jobs].sort((a, b) => b.minutes - a.minutes).map((j) => labels[j.key] ?? j.label))]
+  if (row.workflowsRunning) items.push(row.workflowsRunning === 1 ? 'a workflow' : `${row.workflowsRunning} workflows`)
+  if (row.agentsRunning) items.push(row.agentsRunning === 1 ? 'a background agent' : `${row.agentsRunning} background agents`)
+  return items
+}
+
+// One line however many run: "Still running: run the browser suite · 6m", or with more
+// "Still running: run the browser suite, +2 more · 6m" (its tooltip lists them all)
 export function stillRunning(row, jobs = []) {
-  const parts = [...new Set(jobs.map((j) => j.label))]
-  if (row.workflowsRunning) parts.push(row.workflowsRunning === 1 ? 'a workflow' : `${row.workflowsRunning} workflows`)
-  if (row.agentsRunning) parts.push(row.agentsRunning === 1 ? 'a background agent' : `${row.agentsRunning} background agents`)
-  if (!parts.length) return ''
-  const text = parts.join(', ')
+  const items = runningItems(row, jobs)
+  if (!items.length) return ''
   const minutes = jobs.length ? Math.max(...jobs.map((j) => j.minutes)) : null
-  return text[0].toUpperCase() + text.slice(1) + ' still running' + (minutes !== null ? ' · ' + ago(minutes * 60) : '')
+  return 'Still running: ' + items[0] + (items.length > 1 ? `, +${items.length - 1} more` : '') + (minutes !== null ? ' · ' + ago(minutes * 60) : '')
 }
 
 // A card's lines, top to bottom, as the macOS app draws them. `removed` is the bullets you took off.
@@ -180,7 +190,7 @@ export function cardLines(row, { jobs = [], removed = [], summaries = true } = {
   if (row.side && row.paused) lines.push({ kind: 'paused', glyph: '⏸', text: 'Paused: ' + row.paused })
   if (working) for (const i of visible.filter((i) => i.active)) lines.push({ kind: 'doing', glyph: '▶', text: i.text, removable: true })
   const running = !working ? stillRunning(row, jobs) : ''
-  if (running) lines.push({ kind: 'running', glyph: '◷', text: running })
+  if (running) lines.push({ kind: 'running', glyph: '◷', text: running, all: runningItems(row, jobs) })
   if (row.justDid) lines.push({ kind: 'done', glyph: '✓', text: row.justDid })
   const rest = working ? visible.filter((i) => !i.active) : [...visible.filter((i) => i.active), ...visible.filter((i) => !i.active)]
   for (const i of rest) lines.push({ kind: i.waitsOnYou ? 'waits' : 'next', glyph: i.waitsOnYou ? '!' : '·', text: i.text, removable: true })
@@ -202,6 +212,7 @@ export function sessionText(row, { jobs = [], removed = [], projectNames = true 
     else if (l.kind === 'doing') out.push('▸ ' + l.text)
     else if (l.kind === 'waits') out.push('! ' + l.text + ' · waits on you')
     else if (l.kind === 'request') out.push('you asked: ' + row.request)
+    else if (l.kind === 'running') out.push('◷ still running: ' + l.all.join('; '))
     else out.push(`${l.glyph} ${l.text}`)
   }
   return out.join('\n')

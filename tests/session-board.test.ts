@@ -746,6 +746,29 @@ test('the summary is told which commands the session still runs, and none once t
   expect(prompts[1]).toContain('--- Commands this session left running: none')
 })
 
+test('a running command goes by the description Claude gave it, once per command', async ($, on) => {
+  const prompts: string[] = []
+  const registry = {
+    '101.json': { pid: 101, sessionId: ME, cwd: '/work/app', name: 'Board Mod', status: 'busy', startedAt: 500, updatedAt: 0 },
+    '202.json': { pid: 202, sessionId: 'sess-other', cwd: '/work/site', name: 'Site Fixes', status: 'idle', startedAt: 1000, updatedAt: 0 },
+  }
+  const shell = (cmd: string) => `/bin/zsh -c source /h/.claude/shell-snapshots/snapshot-zsh-0000000002000-ab.sh 2>/dev/null || true && eval '${cmd}' < /dev/null && pwd -P >| /tmp/claude-1-cwd`
+  // The suite twice (a subshell), and a wait loop with a quote in it
+  const ps = [shell('npx playwright test -c pw.config.ts'), shell('npx playwright test -c pw.config.ts'), shell(`until grep -q '"'"'done'"'"' out.log; do sleep 5; done`)].join('\n')
+  const ran = (command: string, description: string) => line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: { command, description, run_in_background: true } }] } })
+  const tail = ['cut', ask('run the suite'), ran('npx playwright test -c pw.config.ts', 'Run the browser suite on WebKit'), result, ran("until grep -q 'done' out.log; do sleep 5; done", 'Wait for the export to finish'), result, said('Both are running in the background.')].join('\n')
+  const { clock, saved } = stubEngine(on, { prompts, registry, tail, ps } as any)
+  await start($)
+  await clock.advance(30_000)
+  await waitFor(() => prompts.length > 0 && !!(saved.get('s:sess-other') as any)?.summary)
+  expect(prompts[0]).toContain('--- Commands this session left running: run the browser suite on WebKit, wait for the export to finish')
+  // What the windows show, by the command each shell runs
+  expect((saved.get('s:sess-other') as any).runningLabels).toEqual({
+    'npx playwright test -c pw.config.ts': 'run the browser suite on WebKit',
+    "until grep -q 'done' out.log; do sleep 5; done": 'wait for the export to finish',
+  })
+})
+
 const finished = (text: string) => line({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } })
 
 test('a turn that ended while its command still runs counts as done, not still working', async ($, on) => {

@@ -1,7 +1,7 @@
 // node --test ui/model.test.mjs: the board's rules, against the macOS app's behaviour
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, stillRunning, sessionText, assignColors, inkFor, ago, AUTO_ORDER } from './model.js'
+import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, stillRunning, runningItems, sessionText, assignColors, inkFor, ago, AUTO_ORDER } from './model.js'
 
 const NOW = 1_800_000_000_000
 const reg = (id, extra = {}) => ({ [`${id}.json`]: { sessionId: id, pid: 1, cwd: `/u/${id}`, name: id, status: 'idle', statusUpdatedAt: NOW - 60_000, startedAt: NOW - 3_600_000, ...extra } })
@@ -90,16 +90,19 @@ test("a card's lines, in the macOS app's order", () => {
   const idle = { ...base, status: 'idle', justDid: 'Opened PR', workflowsRunning: 1, items: [{ text: 'Was doing', active: true }, { text: 'Review', active: false, waitsOnYou: true }] }
   const lines = cardLines(idle, { jobs: [{ label: 'browser tests', minutes: 6 }] })
   assert.deepEqual(lines.map((l) => [l.kind, l.glyph]), [['running', '◷'], ['done', '✓'], ['next', '·'], ['waits', '!']])
-  assert.equal(lines[0].text, 'Browser tests, a workflow still running · 6m')
+  assert.equal(lines[0].text, 'Still running: browser tests, +1 more · 6m')
   assert.deepEqual(cardLines({ ...base, status: 'idle', request: 'find big files' }).map((l) => l.text), ['You asked: “find big files”'])
   assert.deepEqual(cardLines({ ...base, status: 'idle', hasMod: false }).map((l) => l.text), ['No task data yet'])
   assert.deepEqual(cardLines({ ...working, side: '' }, { removed: ['Ship'] }).map((l) => l.text), ['Testing', 'Drew it'])
 })
 
-test('still running reads naturally', () => {
-  const row = { agentsRunning: 2, workflowsRunning: 0 }
-  assert.equal(stillRunning(row), '2 background agents still running')
+test('still running: one line, by the description Claude gave each command, however many run', () => {
+  assert.equal(stillRunning({ agentsRunning: 2, workflowsRunning: 0 }), 'Still running: 2 background agents')
   assert.equal(stillRunning({ agentsRunning: 0, workflowsRunning: 0 }), '')
+  const row = { agentsRunning: 1, workflowsRunning: 0, runningLabels: { 'npm test': 'run the unit tests', 'gh run watch 7': 'wait for the release build' } }
+  const jobs = [{ label: 'tests', minutes: 2, key: 'npm test' }, { label: 'a command', minutes: 9, key: 'gh run watch 7' }, { label: 'a build', minutes: 1, key: 'cargo build' }]
+  assert.equal(stillRunning(row, jobs), 'Still running: wait for the release build, +3 more · 9m')
+  assert.deepEqual(runningItems(row, jobs), ['wait for the release build', 'run the unit tests', 'a build', 'a background agent'])
 })
 
 test('copy session', () => {

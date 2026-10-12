@@ -120,16 +120,40 @@ fn job_label(cmd: &str) -> &'static str {
     }
 }
 
-// Each session's running commands, by session id. sessions: (id, when it started, ms). A command
-// belongs to the live session that started last before its shell snapshot was made.
+// The command a session ran, read from its shell's command line: Claude Code runs it as
+// `… && eval '<command>' < /dev/null && pwd -P …` (the mod reads it the same way, commandOf)
+fn command_of(line: &str) -> String {
+    let Some(start) = line.find("eval '") else { return String::new() };
+    let rest = &line[start + 6..];
+    let raw = match rest.rfind("' < /dev/null") {
+        Some(end) => &rest[..end],
+        None => rest,
+    };
+    raw.replace("'\"'\"'", "'")
+}
+
+// Spaces collapsed and the first 200 characters (UTF-16, as JavaScript counts), as the mod keys it
+fn command_key(command: &str) -> String {
+    let collapsed = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    let units: Vec<u16> = collapsed.encode_utf16().take(200).collect();
+    String::from_utf16_lossy(&units)
+}
+
+// Each session's running commands, by session id: { label, minutes, key } each. sessions: (id,
+// when it started, ms). A command belongs to the live session that started last before its
+// shell snapshot was made; one that shows as more than one process (a subshell) counts once.
 pub fn jobs(procs: &HashMap<u32, Proc>, sessions: &[(String, u64)]) -> Value {
     let mut out: Map<String, Value> = Map::new();
     for p in procs.values() {
         let Some(ms) = snapshot_ms(&p.cmd) else { continue };
         let owner = sessions.iter().filter(|(_, started)| *started <= ms).max_by_key(|(_, started)| *started);
         if let Some((id, _)) = owner {
-            let list = out.entry(id.clone()).or_insert_with(|| json!([]));
-            list.as_array_mut().unwrap().push(json!({ "label": job_label(&p.cmd), "minutes": p.minutes }));
+            let key = command_key(&command_of(&p.cmd));
+            let list = out.entry(id.clone()).or_insert_with(|| json!([])).as_array_mut().unwrap();
+            if !key.is_empty() && list.iter().any(|j| j["key"] == key.as_str()) {
+                continue;
+            }
+            list.push(json!({ "label": job_label(&p.cmd), "minutes": p.minutes, "key": key }));
         }
     }
     Value::Object(out)
@@ -650,6 +674,19 @@ mod tests {
         assert_eq!(j["new"][0]["label"], "tests");
         assert_eq!(j["new"][0]["minutes"], 6);
         assert!(j.get("old").is_none() && j.get("later").is_none());
+    }
+
+    #[test]
+    fn commands_are_read_and_keyed_as_the_mod_does() {
+        let line = "/bin/zsh -c source /h/.claude/shell-snapshots/snapshot-zsh-1000000000500-ab.sh && eval 'until grep -q '\"'\"'done'\"'\"' out.log;  do sleep 5; done' < /dev/null && pwd -P >| /tmp/c";
+        assert_eq!(command_of(line), "until grep -q 'done' out.log;  do sleep 5; done");
+        assert_eq!(command_key(&command_of(line)), "until grep -q 'done' out.log; do sleep 5; done");
+        let mut procs = HashMap::new();
+        for pid in [1, 2] {
+            procs.insert(pid, Proc { parent: None, name: "zsh".into(), exe: String::new(), cmd: line.into(), minutes: 3 });
+        }
+        let j = jobs(&procs, &[("s".to_string(), 1000000000000)]);
+        assert_eq!(j["s"].as_array().unwrap().len(), 1);
     }
 
     #[test]

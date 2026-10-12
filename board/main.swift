@@ -69,6 +69,8 @@ struct Row: Identifiable {
     var project: String = ""
     // Its Remote Control session ("session_01…"), the claude.ai page Claude Desktop opens it by
     var bridgeId: String = ""
+    // The descriptions Claude gave the commands it still runs, by command key (from the mod)
+    var runningLabels: [String: String] = [:]
 
     var isQuiet: Bool { status == "idle" && since > quietSeconds }
 }
@@ -547,6 +549,23 @@ func themeIsDark(_ choice: String?) -> Bool {
 struct BackgroundJob: Hashable {
     let label: String
     let minutes: Int
+    // The command it runs, as the mod keys it (commandKey), to find the description Claude gave it
+    var key: String = ""
+}
+
+// The command a session ran, read from its shell's command line: Claude Code runs it as
+// `… && eval '<command>' < /dev/null && pwd -P …` (the mod reads it the same way, commandOf)
+func commandOf(_ line: String) -> String {
+    guard let start = line.range(of: "eval '") else { return "" }
+    let rest = line[start.upperBound...]
+    let raw = rest.range(of: "' < /dev/null", options: .backwards).map { String(rest[..<$0.lowerBound]) } ?? String(rest)
+    return raw.replacingOccurrences(of: "'\"'\"'", with: "'")
+}
+
+// Spaces collapsed and the first 200 characters (UTF-16, as JavaScript counts), as the mod keys it
+func commandKey(_ command: String) -> String {
+    let collapsed = command.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    return String(decoding: Array(collapsed.utf16.prefix(200)), as: UTF16.self)
 }
 
 // What a command does, in plain words, from its command line
@@ -594,7 +613,10 @@ func backgroundJobs(sessions: [(id: String, startedAt: Double)]) -> [String: [Ba
         guard let match = snapshot.firstMatch(in: command, range: range), let r = Range(match.range(at: 1), in: command),
               let made = Double(command[r]),
               let owner = sessions.filter({ $0.startedAt <= made }).max(by: { $0.startedAt < $1.startedAt }) else { continue }
-        jobs[owner.id, default: []].append(BackgroundJob(label: jobLabel(command), minutes: elapsedMinutes(String(text[..<space]))))
+        let key = commandKey(commandOf(command))
+        // One command can show as more than one process (a subshell): count it once
+        if !key.isEmpty && jobs[owner.id, default: []].contains(where: { $0.key == key }) { continue }
+        jobs[owner.id, default: []].append(BackgroundJob(label: jobLabel(command), minutes: elapsedMinutes(String(text[..<space])), key: key))
     }
     return jobs
 }
@@ -722,7 +744,8 @@ func loadRows(now: Double) -> [Row] {
                 .filter { ["pending", "in_progress"].contains($0["status"] as? String ?? "") }.isEmpty),
             // The folder the session was opened in (the registry's), not one it moved into since
             project: projectName((reg?["cwd"] as? String) ?? cwd),
-            bridgeId: (reg?["bridgeSessionId"] as? String) ?? ""
+            bridgeId: (reg?["bridgeSessionId"] as? String) ?? "",
+            runningLabels: (rec?["runningLabels"] as? [String: String]) ?? [:]
         )
     }
     .sorted { (rank[$0.status] ?? 3, $0.since) < (rank[$1.status] ?? 3, $1.since) }
@@ -1461,7 +1484,7 @@ func sessionText(_ row: Row, removed: [String], jobs: [BackgroundJob] = []) -> S
     if !row.paused.isEmpty { lines.append("⏸ paused: " + row.paused) }
     for item in row.items where row.status == "working" && item.isActive && !removed.contains(item.text) { lines.append("▸ " + item.text) }
     if row.status != "working" && (!jobs.isEmpty || row.agentsRunning > 0 || row.workflowsRunning > 0) {
-        lines.append("◷ " + stillRunning(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning))
+        lines.append("◷ still running: " + runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels).joined(separator: "; "))
     }
     if !row.justDid.isEmpty { lines.append("✓ " + row.justDid) }
     for item in row.items where (row.status != "working" || !item.isActive) && !removed.contains(item.text) {
@@ -1471,14 +1494,25 @@ func sessionText(_ row: Row, removed: [String], jobs: [BackgroundJob] = []) -> S
     return lines.joined(separator: "\n")
 }
 
-// "Browser tests still running · 6m", or "Browser tests, a background agent still running · 6m"
-func stillRunning(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0) -> String {
-    var labels: [String] = []
-    for job in jobs where !labels.contains(job.label) { labels.append(job.label) }
-    if workflows > 0 { labels.append(workflows == 1 ? "a workflow" : "\(workflows) workflows") }
-    if agents > 0 { labels.append(agents == 1 ? "a background agent" : "\(agents) background agents") }
-    let what = labels.joined(separator: ", ")
-    return what.prefix(1).uppercased() + what.dropFirst() + " still running"
+// What a session still runs, each by the description Claude gave it (else what its command line
+// suggests), the longest-running first, then workflows and background agents
+func runningItems(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0, labels: [String: String] = [:]) -> [String] {
+    var items: [String] = []
+    for job in jobs.sorted(by: { $0.minutes > $1.minutes }) {
+        let label = labels[job.key] ?? job.label
+        if !items.contains(label) { items.append(label) }
+    }
+    if workflows > 0 { items.append(workflows == 1 ? "a workflow" : "\(workflows) workflows") }
+    if agents > 0 { items.append(agents == 1 ? "a background agent" : "\(agents) background agents") }
+    return items
+}
+
+// One line however many run: "Still running: run the browser suite · 6m", or with more
+// "Still running: run the browser suite, +2 more · 6m" (the card's tooltip lists them all)
+func stillRunning(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0, labels: [String: String] = [:]) -> String {
+    let items = runningItems(jobs, agents: agents, workflows: workflows, labels: labels)
+    guard let first = items.first else { return "" }
+    return "Still running: " + first + (items.count > 1 ? ", +\(items.count - 1) more" : "")
         + (jobs.isEmpty ? "" : " · " + ago(Double((jobs.map(\.minutes).max() ?? 0) * 60)))
 }
 
@@ -1550,6 +1584,8 @@ struct ListLine: View {
     var symbol: String?
     var glyphColor: Color?
     var onRemove: (() -> Void)?
+    // At most this many lines (the rest cut with …), or as many as it needs
+    var maxLines: Int?
     @State private var hovering = false
 
     var body: some View {
@@ -1563,7 +1599,7 @@ struct ListLine: View {
                 }
             }
             .foregroundStyle(glyphColor ?? color).frame(width: 14, alignment: .leading)
-            Text(text).fixedSize(horizontal: false, vertical: true)
+            Text(text).lineLimit(maxLines).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
             if let onRemove {
                 Button(action: onRemove) {
@@ -1695,7 +1731,8 @@ struct SessionCard: View {
                     ListLine(glyph: "", text: item.text, color: p.doing, symbol: "play.fill", glyphColor: p.green, onRemove: { onRemove(item.text) })
                 }
                 if row.status != "working" && (!jobs.isEmpty || row.agentsRunning > 0 || row.workflowsRunning > 0) {
-                    ListLine(glyph: "◷", text: stillRunning(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning), color: p.doing)
+                    ListLine(glyph: "◷", text: stillRunning(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels), color: p.doing, maxLines: 2)
+                        .help(runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels).joined(separator: "\n"))
                 }
                 if !row.justDid.isEmpty { ListLine(glyph: "✓", text: row.justDid, color: p.muted) }
                 ForEach(row.status == "working" ? visible.filter { !$0.isActive } : visible.filter(\.isActive) + visible.filter { !$0.isActive },
