@@ -17,14 +17,14 @@ Also:
 - Control-Option-S shows or hides the window.
 - Optional sounds; light and dark.
 
-Needs: Claude Code 2.1.287+, and macOS 12+, Windows 10/11, or a 64-bit Linux desktop.
+Needs: Claude Code 2.1.287+, and macOS 15+ with Apple's command-line tools (`xcode-select --install`), Windows 10/11, or a 64-bit Linux desktop.
 
 Install (run these for me):
 ```sh
 claude plugin marketplace add KiranPothana/session-board
 claude plugin install session-board@session-board
 ```
-Then I start a new Claude Code session, or type /session-board in one. The first time, it downloads the window app, checks its checksum and opens it. Chats already running show up too.
+Then I start a new Claude Code session, or type /session-board in one. The first time, it gets the window app ready (on a Mac it builds it in under a minute; on Windows and Linux it downloads it and checks its checksum) and opens it. Chats already running show up too.
 
 Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my computer. Bug reports are sent only when I say "report" (or click Report), and never include anything from my chats.
 
