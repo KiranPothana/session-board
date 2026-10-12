@@ -28,6 +28,10 @@ type Opts = {
   registry?: Record<string, object>
   decision?: string
   env?: Record<string, string>
+  // Files by path ending, read before anything else; paths that exist; a command's answer
+  files?: Record<string, string>
+  exists?: (path: string) => boolean
+  run?: (argv: string[]) => { exitCode: number; stdout?: string; stderr?: string } | undefined
   // The window app: built from the current source, built from older source, or not there
   app?: 'current' | 'stale' | 'missing'
   build?: { exitCode: number; stderr?: string }
@@ -96,15 +100,18 @@ function stubEngine(on: any, opts: Opts = {}) {
   }))
   on('fs.read', ($: any, e: any) => {
     const path = String(e.path)
+    for (const [end, text] of Object.entries(opts.files ?? {})) if (path.endsWith(end)) return { value: text }
     if (path === DATA + '/removed.json') return opts.removed ? { value: JSON.stringify(opts.removed) } : { deny: 'no such file' }
     if (path === DATA + '/settings.json') return opts.settings ? { value: JSON.stringify(opts.settings) } : { deny: 'no such file' }
     if (path === DATA + '/built.sha') return app === 'missing' ? { deny: 'no such file' } : { value: app === 'current' ? BUILT + '\n' : 'old:old\n' }
     return { value: JSON.stringify(registry[path.split('/').pop()!]) }
   })
-  on('fs.exists', ($: any, e: any) => ({ value: e.path === APP && app !== 'missing' }))
+  on('fs.exists', ($: any, e: any) => ({ value: opts.exists ? opts.exists(e.path) : e.path === APP && app !== 'missing' }))
   on('process.run', ($: any, e: any) => {
     opts.runs?.push(e.argv)
     const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '' } })
+    const custom = opts.run?.(e.argv)
+    if (custom) return { value: { stdout: '', stderr: '', ...custom } }
     // The running-jobs check, and a saved conversation's end (tail, without the image data)
     if (e.argv[0] === 'sh' && e.argv[1] === '-c' && String(e.argv[2]).startsWith('ps ')) return ok(opts.ps ?? '')
     if (e.argv[0] === 'sh' && e.argv[1] === '-c') return ok(opts.tailFor?.(Number(e.argv[4])) ?? opts.tail ?? '')
@@ -1077,4 +1084,65 @@ test('a summary call that never answers is given up on, so later summaries still
   await clock.advance(15_000)
   await waitFor(() => !!(saved.get('s:' + ME) as any)?.summary)
   expect((saved.get('s:' + ME) as any).summary.pending).toEqual(['Try the new popup · waits on you'])
+})
+
+// ---- Windows and Linux: the window app is downloaded and checked, not built
+
+const SUM = 'a'.repeat(64)
+const RELEASE = JSON.stringify({ version: '0.2.0', assets: { 'windows-x64': { file: 'session-board.exe', sha256: SUM }, 'linux-x64': { file: 'Session-Board.AppImage', sha256: SUM } } })
+const WINDOWS = { OS: 'Windows_NT', APPDATA: 'C:/Users/k/AppData/Roaming', LOCALAPPDATA: 'C:/Users/k/AppData/Local', PROCESSOR_ARCHITECTURE: 'AMD64' }
+const WIN_DIR = 'C:/Users/k/AppData/Local/Programs/Session Board'
+
+test('on Windows the app is downloaded, checked against its checksum, put in place and started', async ($, on) => {
+  const runs: string[][] = []
+  const writes: string[][] = []
+  stubEngine(on, {
+    runs, writes, env: WINDOWS, files: { '/app/release.json': RELEASE }, exists: () => false,
+    run: (argv) => (argv[0] === 'powershell' && argv.at(-1)!.includes('Get-FileHash') ? { exitCode: 0, stdout: SUM.toUpperCase() + '\r\n' } : undefined),
+  })
+  await start($)
+  await waitFor(() => runs.some((r) => r[0] === 'cmd'))
+  const curl = runs.find((r) => r[0] === 'curl')!
+  expect(curl.at(-1)).toBe('https://github.com/KiranPothana/session-board/releases/download/v0.2.0/session-board.exe')
+  expect(curl).toContain(WIN_DIR + '/session-board.exe.download')
+  expect(runs.some((r) => r[0] === 'powershell' && r.at(-1)!.includes('Move-Item'))).toBe(true)
+  // (On this test's Mac a C: path isn't absolute, so the engine puts it under the working folder)
+  expect(writes.some(([path, text]) => path.endsWith(WIN_DIR + '/version.txt') && text === '0.2.0')).toBe(true)
+  expect(runs.find((r) => r[0] === 'cmd')).toEqual(['cmd', '/c', 'start', '', WIN_DIR + '/session-board.exe'])
+  // Nothing macOS: no Swift build, no open
+  expect(runs.some((r) => r[0] === 'open' || r[0] === 'xcode-select')).toBe(false)
+})
+
+test("a download that doesn't match its checksum is thrown away, and says so", async ($, on) => {
+  const runs: string[][] = []
+  const toasts: string[] = []
+  stubEngine(on, {
+    runs, toasts, env: WINDOWS, files: { '/app/release.json': RELEASE }, exists: () => false,
+    run: (argv) => (argv[0] === 'powershell' && argv.at(-1)!.includes('Get-FileHash') ? { exitCode: 0, stdout: 'B'.repeat(64) } : undefined),
+  })
+  await start($)
+  await waitFor(() => toasts.length > 0)
+  expect(toasts[0]).toContain("didn't match its checksum")
+  expect(runs.some((r) => r[0] === 'powershell' && r.at(-1)!.includes('Remove-Item'))).toBe(true)
+  expect(runs.some((r) => r[0] === 'powershell' && r.at(-1)!.includes('Move-Item'))).toBe(false)
+  expect(runs.some((r) => r[0] === 'cmd')).toBe(false)
+})
+
+test('on Linux the AppImage is downloaded, checked, made runnable and started on its own', async ($, on) => {
+  const runs: string[][] = []
+  stubEngine(on, {
+    runs, files: { '/app/release.json': RELEASE }, exists: () => false,
+    run: (argv) => {
+      if (argv[0] === 'uname') return { exitCode: 0, stdout: argv[1] === '-s' ? 'Linux\n' : 'x86_64\n' }
+      if (argv[0] === 'sha256sum') return { exitCode: 0, stdout: SUM + '  file\n' }
+      return undefined
+    },
+  })
+  await start($)
+  const dir = HOME + '/.local/share/session-board/app'
+  await waitFor(() => runs.some((r) => r[0] === 'sh' && String(r[2]).includes('nohup')))
+  expect(runs.find((r) => r[0] === 'curl')!.at(-1)).toBe('https://github.com/KiranPothana/session-board/releases/download/v0.2.0/Session-Board.AppImage')
+  expect(runs).toContainEqual(['mv', '-f', dir + '/Session-Board.AppImage.download', dir + '/Session-Board.AppImage'])
+  expect(runs).toContainEqual(['chmod', '+x', dir + '/Session-Board.AppImage'])
+  expect(runs.find((r) => r[0] === 'sh' && String(r[2]).includes('nohup'))!.at(-1)).toBe(dir + '/Session-Board.AppImage')
 })

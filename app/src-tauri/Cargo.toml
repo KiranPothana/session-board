@@ -13,6 +13,7 @@ tauri-build = { version = "=2.7.0", features = [] }
 tauri = { version = "=2.12.0", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-global-shortcut = "=2.4.0"
 tauri-plugin-opener = "=2.6.0"
+tauri-plugin-single-instance = "=2.5.0"
 serde = { version = "1", features = ["derive"] }
 active-win-pos-rs = "=0.11.0"
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }

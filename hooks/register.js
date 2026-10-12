@@ -124,7 +124,49 @@ const oneLine = (s, n) => {
 
 const baseName = (p) => String(p ?? '').split('/').filter(Boolean).pop() ?? '?'
 
-const dataDir = async ($) => (await $.env.get('HOME')) + '/Library/Application Support/session-board'
+// Which OS this is: Windows says so in OS; uname tells macOS from Linux. Asked once.
+let osName = null
+async function osOf($) {
+  if (osName) return osName
+  if ((await $.env.get('OS')) === 'Windows_NT') return (osName = 'windows')
+  const r = await $.process.run(['uname', '-s'], { timeoutMs: 5000 }).catch(() => null)
+  return (osName = String(r?.stdout ?? '').trim() === 'Linux' ? 'linux' : 'macos')
+}
+
+const homeOf = async ($) => (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
+
+// The folder the mod and the window share, per OS (the window's shared_dir in app/src-tauri)
+async function dataDir($) {
+  const os = await osOf($)
+  if (os === 'windows') return ((await $.env.get('APPDATA')) || (await homeOf($)) + '/AppData/Roaming') + '/session-board'
+  if (os === 'linux') return ((await $.env.get('XDG_DATA_HOME')) || (await homeOf($)) + '/.local/share') + '/session-board'
+  return (await homeOf($)) + '/Library/Application Support/session-board'
+}
+
+// PowerShell on Windows, which has no sh: a script run with its arguments as literals
+const psQuote = (x) => "'" + String(x).replace(/'/g, "''") + "'"
+const powershell = ($, script, timeoutMs) =>
+  $.process.run(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { timeoutMs })
+
+// A file's last `bytes` as text, read like READ_TAIL (the cap and the image data and long lines
+// left out), on any OS
+async function tailOf($, path, bytes) {
+  if ((await osOf($)) !== 'windows') {
+    const r = await $.process.run(['sh', '-c', READ_TAIL, 'sh', String(bytes), path], { timeoutMs: 20000 })
+    return r.exitCode === 0 ? r.stdout ?? '' : ''
+  }
+  const script = [
+    `$f = [IO.File]::Open(${psQuote(path)}, 'Open', 'Read', 'ReadWrite,Delete')`,
+    `try { $start = [Math]::Max(0, $f.Length - ${Number(bytes)}); [void]$f.Seek($start, 'Begin'); $buf = New-Object byte[] ($f.Length - $start); $n = 0`,
+    `while ($n -lt $buf.Length) { $r = $f.Read($buf, $n, $buf.Length - $n); if ($r -le 0) { break }; $n += $r } } finally { $f.Close() }`,
+    `$t = [Text.Encoding]::UTF8.GetString($buf, 0, $n) -replace '"data":"[A-Za-z0-9+/=]{200,}"', '"data":""'`,
+    `$t = ($t -split "\n" | Where-Object { $_.Length -le 20000 }) -join "\n"`,
+    `if ($t.Length -gt ${READ_OUT_BYTES}) { $t = $t.Substring($t.Length - ${READ_OUT_BYTES}) }`,
+    `[Console]::OutputEncoding = [Text.Encoding]::UTF8; [Console]::Out.Write($t)`,
+  ].join('\n')
+  const r = await powershell($, script, 20000)
+  return r.exitCode === 0 ? r.stdout ?? '' : ''
+}
 
 // One line naming what a tool call is doing, such as "Bash: Run the tests"
 function stepOf(e) {
@@ -221,7 +263,7 @@ async function projectOf($, cwd) {
   let root = cwd
   const worktree = cwd.indexOf('/.claude/worktrees/')
   if (worktree >= 0) root = cwd.slice(0, worktree)
-  const home = await $.env.get('HOME')
+  const home = await homeOf($)
   for (let dir = root; home && dir.startsWith(home + '/'); dir = dir.slice(0, dir.lastIndexOf('/'))) {
     let git
     try {
@@ -413,10 +455,12 @@ function jobLabel(command) {
 const JOBS_CMD = "ps -axo command= | grep '/.claude/shell-snapshots/snapshot-' | grep -v grep"
 async function runningJobs($, registry) {
   const jobs = new Map()
-  const r = await $.process.run(['sh', '-c', JOBS_CMD], { timeoutMs: 10000 }).catch(() => null)
+  const r = (await osOf($)) === 'windows'
+    ? await powershell($, "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*shell-snapshots*snapshot-*' } | ForEach-Object { $_.CommandLine }", 15000).catch(() => null)
+    : await $.process.run(['sh', '-c', JOBS_CMD], { timeoutMs: 10000 }).catch(() => null)
   const starts = [...registry.values()].filter((x) => x.startedAt).map((x) => ({ id: x.sessionId, startedAt: x.startedAt }))
   for (const line of String(r?.stdout ?? '').split('\n')) {
-    const made = /\/\.claude\/shell-snapshots\/snapshot-[a-z]+-(\d{13})-/.exec(line)
+    const made = /[\\/]\.claude[\\/]shell-snapshots[\\/]snapshot-[a-z]+-(\d{13})-/.exec(line)
     if (!made) continue
     const owner = starts.filter((x) => x.startedAt <= Number(made[1])).sort((a, b) => b.startedAt - a.startedAt)[0]
     if (owner) jobs.set(owner.id, [...(jobs.get(owner.id) ?? []), jobLabel(line)])
@@ -547,7 +591,7 @@ function backgroundLabels(agents = 0, workflows = 0) {
 
 // Where this session's own conversation is saved
 async function ownTranscriptPath($) {
-  const home = await $.env.get('HOME')
+  const home = await homeOf($)
   let reg = liveReg.get(me.id)
   if (!reg) {
     for (const f of await $.fs.list(home + '/.claude/sessions')) {
@@ -585,8 +629,14 @@ async function watchTitle($) {
     while (me && !me.title && (await $.clock.now()) < until) {
       await $.clock.sleep(TITLE_POLL_MS)
       if (!me || me.title) break
-      const r = await $.process.run(['sh', '-c', READ_TITLE, 'sh', await ownTranscriptPath($)], { timeoutMs: 10000 })
-      const line = r.exitCode === 0 ? (r.stdout ?? '').trim().split('\n').pop() : ''
+      const path = await ownTranscriptPath($)
+      let line = ''
+      if ((await osOf($)) === 'windows') {
+        line = (await tailOf($, path, 2000000)).split('\n').filter((l) => l.includes('"type":"ai-title"')).pop() ?? ''
+      } else {
+        const r = await $.process.run(['sh', '-c', READ_TITLE, 'sh', path], { timeoutMs: 10000 })
+        line = r.exitCode === 0 ? (r.stdout ?? '').trim().split('\n').pop() : ''
+      }
       let title = ''
       try {
         title = String(JSON.parse(line).aiTitle ?? '').trim()
@@ -605,7 +655,7 @@ async function watchTitle($) {
 
 // Read the live-session registry, and delete the records of sessions that ended a while ago
 async function syncRegistry($) {
-  const home = await $.env.get('HOME')
+  const home = await homeOf($)
   const dir = home + '/.claude/sessions'
   const live = new Map()
   try {
@@ -758,8 +808,7 @@ async function readExchanges($, path, want) {
     // Read what tail finds
   }
   for (let bytes = TAIL_START_BYTES; ; bytes = Math.min(bytes * 4, TAIL_MAX_BYTES)) {
-    const r = await $.process.run(['sh', '-c', READ_TAIL, 'sh', String(bytes), path], { timeoutMs: 20000 })
-    const out = r.exitCode === 0 ? r.stdout ?? '' : ''
+    const out = await tailOf($, path, bytes)
     const parsed = exchangesFromTranscript(out)
     // Reading further back can't help once the output is full
     const full = out.length >= READ_OUT_BYTES - 1000
@@ -774,7 +823,7 @@ async function readExchanges($, path, want) {
 async function checkOwnJobs($) {
   if (!me || me.status !== 'idle' || summarizing) return
   const registry = new Map()
-  const home = await $.env.get('HOME')
+  const home = await homeOf($)
   for (const f of await $.fs.list(home + '/.claude/sessions')) {
     if (!f.name.endsWith('.json')) continue
     try {
@@ -868,7 +917,7 @@ async function catchUp($) {
   await $.store.set(CATCHUP_LEASE, { id: me.id, until: now + 3 * CATCHUP_MS, v: LEASE_VERSION })
   await runReplays($).catch(() => {})
   await syncRegistry($)
-  const home = await $.env.get('HOME')
+  const home = await homeOf($)
   const summaries = await summariesOn($)
   const jobs = await runningJobs($, liveReg)
   for (const [id, reg] of liveReg) {
@@ -932,7 +981,7 @@ async function catchUp($) {
 // here runs without the Apple notarization a downloaded one would need. `current` is false
 // when it has to be (re)built.
 async function appState($) {
-  const app = (await $.env.get('HOME')) + '/Applications/' + APP_NAME
+  const app = (await homeOf($)) + '/Applications/' + APP_NAME
   const board = $.plugin.root + '/board'
   let want = ''
   try {
@@ -969,14 +1018,91 @@ async function buildApp($) {
   return app
 }
 
-// Start the window app, building it first if needed, or show its window again if it is
-// running but hidden. `open` keeps it to one instance; -g leaves the focus where it is.
+// Windows and Linux: the window app (app/ in this repo) is built for each OS by the release
+// workflow and downloaded, then checked against the checksum in app/release.json, part of this
+// plugin, before it is installed: a download that doesn't match is thrown away.
+const RELEASES = 'https://github.com/KiranPothana/session-board/releases/download'
+
+async function downloadedApp($) {
+  const os = await osOf($)
+  const release = JSON.parse(await $.fs.read($.plugin.root + '/app/release.json'))
+  const machine = os === 'windows'
+    ? String((await $.env.get('PROCESSOR_ARCHITECTURE')) ?? '')
+    : String((await $.process.run(['uname', '-m'], { timeoutMs: 5000 }).catch(() => null))?.stdout ?? '').trim()
+  const arch = /arm64|aarch64/i.test(machine) ? 'arm64' : 'x64'
+  const asset = release.assets?.[`${os}-${arch}`]
+  if (!asset?.file || !/^[0-9a-f]{64}$/.test(asset.sha256 ?? '')) throw new Error(`there's no Session Board window app for ${os} on ${arch} yet`)
+  const dir = os === 'windows'
+    ? ((await $.env.get('LOCALAPPDATA')) || (await homeOf($)) + '/AppData/Local') + '/Programs/Session Board'
+    : (await dataDir($)) + '/app'
+  let have = ''
+  try {
+    have = String(await $.fs.read(dir + '/version.txt')).trim()
+  } catch {
+    // Not installed yet
+  }
+  const app = dir + '/' + asset.file
+  return { os, dir, app, asset, version: release.version, current: have === release.version && (await $.fs.exists(app)) }
+}
+
+async function installApp($, d) {
+  const run = (argv, timeoutMs = 60000) => $.process.run(argv, { timeoutMs })
+  const ps = (script, timeoutMs = 60000) => powershell($, script, timeoutMs)
+  const tmp = d.app + '.download'
+  if (d.os === 'windows') await ps(`New-Item -ItemType Directory -Force -Path ${psQuote(d.dir)} | Out-Null`)
+  else await run(['mkdir', '-p', d.dir])
+  const got = await run(['curl', '-fsSL', '--retry', '2', '-o', tmp, `${RELEASES}/v${d.version}/${d.asset.file}`], 5 * 60 * 1000)
+  if (got.exitCode !== 0) throw new Error('the window app could not be downloaded: ' + oneLine(got.stderr, 120))
+  const sum = d.os === 'windows'
+    ? (await ps(`(Get-FileHash -Algorithm SHA256 -LiteralPath ${psQuote(tmp)}).Hash`)).stdout
+    : (await run(['sha256sum', tmp])).stdout
+  if (String(sum ?? '').trim().split(/\s+/)[0].toLowerCase() !== d.asset.sha256) {
+    if (d.os === 'windows') await ps(`Remove-Item -Force -LiteralPath ${psQuote(tmp)}`).catch(() => {})
+    else await run(['rm', '-f', tmp]).catch(() => {})
+    throw new Error("the downloaded window app didn't match its checksum, so it wasn't installed")
+  }
+  if (d.os === 'windows') {
+    // A running copy holds its file: stop it, then put the new one in place
+    await run(['taskkill', '/IM', d.asset.file, '/F']).catch(() => {})
+    await ps(`Move-Item -Force -LiteralPath ${psQuote(tmp)} -Destination ${psQuote(d.app)}`)
+  } else {
+    await run(['mv', '-f', tmp, d.app])
+    await run(['chmod', '+x', d.app])
+  }
+  await $.fs.write(d.dir + '/version.txt', d.version)
+}
+
+// Gets the window app ready: built on macOS, downloaded on Windows and Linux. One session at a
+// time (a lease in the store); the others throw "building" and leave it to that one.
+async function readyApp($) {
+  if ((await osOf($)) === 'macos') return { os: 'macos', app: await buildApp($) }
+  const d = await downloadedApp($)
+  if (d.current) return d
+  const now = await $.clock.now()
+  const lease = await $.store.get(BUILD_LEASE)
+  if (lease && lease.id !== me?.id && lease.until > now) throw new Error('building')
+  await $.store.set(BUILD_LEASE, { id: me?.id ?? '', until: now + BUILD_MS })
+  try {
+    await installApp($, d)
+  } finally {
+    await $.store.delete(BUILD_LEASE).catch(() => {})
+  }
+  return d
+}
+
+// Start the window app, getting it ready first if needed, or show its window again if it is
+// running but hidden. macOS: `open` keeps it to one instance and -g leaves the focus where it
+// is. Windows and Linux: the app keeps itself to one instance, and starts on its own, outliving
+// this session.
 async function openBoard($) {
-  building ??= buildApp($).finally(() => {
+  building ??= readyApp($).finally(() => {
     building = null
   })
-  const app = await building
-  await $.process.run(['open', '-g', app], { timeoutMs: 10000 })
+  const { os, app } = await building
+  if (os === 'macos') await $.process.run(['open', '-g', app], { timeoutMs: 10000 })
+  else if (os === 'windows') await $.process.run(['cmd', '/c', 'start', '', app], { timeoutMs: 10000 })
+  // The AppImage unpacks itself rather than mounting with FUSE, which many systems lack
+  else await $.process.run(['sh', '-c', 'APPIMAGE_EXTRACT_AND_RUN=1 nohup "$0" >/dev/null 2>&1 &', app], { timeoutMs: 10000 })
 }
 
 // A build that failed says why under the prompt (in the terminal; Desktop draws no mod notices),
@@ -1051,6 +1177,12 @@ export function register(on) {
       await $.fs.write((await dataDir($)) + '/show-request', String((await $.clock.now()) / 1000))
     } catch {
       // Without the request the window still starts, following your settings as usual
+    }
+    if ((await osOf($)) !== 'macos') {
+      const d = await downloadedApp($).catch((err) => ({ error: err }))
+      if (d.error) return { text: 'Session Board: ' + oneLine(d.error.message, 200) }
+      void openBoard($).catch((err) => reportFailure($, err))
+      return d.current || building ? {} : { text: 'Downloading the Session Board app (first run or after an update); the window opens when it is done.' }
     }
     const { current } = await appState($)
     if (current || building) {

@@ -347,6 +347,12 @@ fn main() {
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
     builder
+        // Started again while it runs (the plugin starts it on each new session): show the board
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = board(app) {
+                show_quietly(&w);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![read_state, write_shared, set_tray, show_board, set_shortcut, front_app, own_pid, log, show_window, set_toasts_visible, ask_accessibility, focus, open_session, read_crash])
