@@ -13,3 +13,6 @@ node_modules/
 __pycache__/
 reports-worker/node_modules/
 reports-worker/.wrangler/
+app/node_modules/
+app/src-tauri/target/
+app/src-tauri/gen/
