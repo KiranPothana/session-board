@@ -144,7 +144,7 @@ LD = _json.dumps({
     '@context': 'https://schema.org', '@type': 'SoftwareApplication', 'name': 'Session Board',
     'alternateName': 'Session Board for Claude Code', 'description': DESC, 'url': URL,
     'applicationCategory': 'DeveloperApplication', 'applicationSubCategory': 'Claude Code mod',
-    'operatingSystem': 'macOS 15 or later, Windows 10 or 11, Linux', 'license': 'https://opensource.org/licenses/MIT',
+    'operatingSystem': 'macOS 12 or later, Windows 10 or 11, Linux', 'license': 'https://opensource.org/licenses/MIT',
     'isAccessibleForFree': True, 'offers': {'@type': 'Offer', 'price': '0', 'priceCurrency': 'USD'},
     'codeRepository': GH, 'image': URL + 'hero.jpg',
     'keywords': 'Claude Code mod, Claude Code plugin, Claude Code sessions, Claude Desktop, Remote Control, macOS',
