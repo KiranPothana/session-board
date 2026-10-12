@@ -47,7 +47,7 @@ i0 = body.index('<p style="margin: 0; font: 15px/1.55')
 body = body[:i0] + f'''<div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font: 15px/1.5 {SANS}; color: #A6A7AC"><span>Or let Claude do it: paste this into any chat.</span><button class="ai-copy" aria-label="Copy an overview for your AI" style="display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 13px {SANS}">{ICON['copy']}<span class="ai-t">Copy for AI</span></button></div>
 ''' + body[i0:]
 body = body.replace('<span>Made for Claude Code. Not an Anthropic product.</span>',
-    f'<span>Bug or idea? Tell Claude and say <b style="color: #DADADF; font-weight: 600">report</b>, or <a href="{GH}/issues" style="color: #B4B5B9">open an issue</a>.</span><span>Made for Claude Code. Not an Anthropic product.</span>', 1)
+    f'<span>Bug or idea? Tell Claude and say <b style="color: #DADADF; font-weight: 600">report</b>, or <a href="{GH}/issues" style="color: #B4B5B9">open an issue</a>.</span><span><a href="privacy" style="color: #B4B5B9">Privacy</a></span><span>Made for Claude Code. Not an Anthropic product.</span>', 1)
 video = ''
 
 css += '''
@@ -184,7 +184,7 @@ open(os.path.join(OUT, 'index.html'), 'w').write(head + body + ai_block + script
 open(os.path.join(OUT, 'hero.js'), 'w').write(open(os.path.join(HERE, 'board-engine.js')).read() + '\n' + open(os.path.join(HERE, 'hero-page.js')).read())
 open(os.path.join(OUT, 'llms.txt'), 'w').write(AI_TEXT + '\n')
 open(os.path.join(OUT, 'robots.txt'), 'w').write(f'User-agent: *\nAllow: /\nSitemap: {URL}sitemap.xml\n')
-open(os.path.join(OUT, 'sitemap.xml'), 'w').write(f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>{URL}</loc></url>\n<url><loc>{URL}llms.txt</loc></url>\n</urlset>\n')
+open(os.path.join(OUT, 'sitemap.xml'), 'w').write(f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>{URL}</loc></url>\n<url><loc>{URL}llms.txt</loc></url>\n<url><loc>{URL}privacy</loc></url>\n</urlset>\n')
 
 # The README's copy, between its markers, as a code block (GitHub gives those a copy button)
 readme_path = os.path.join(ROOT, 'README.md')

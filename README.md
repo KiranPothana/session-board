@@ -1,6 +1,6 @@
 # Session Board
 
-**[sessionboard.dev](https://sessionboard.dev)**
+**[sessionboard.dev](https://sessionboard.dev)** · [Privacy](https://sessionboard.dev/privacy)
 
 **Session Board is a Claude Code mod that shows every Claude Code session on your computer in one floating window**, with a live summary of each: what it just did, what it's doing, what's next, and which sessions need you. Terminal, Remote Control and Claude Desktop. Mac, Windows and Linux.
 

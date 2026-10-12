@@ -24,5 +24,6 @@
     "macos",
     "windows",
     "linux"
-  ]
+  ],
+  "privacyPolicyUrl": "https://sessionboard.dev/privacy"
 }
