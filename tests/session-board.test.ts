@@ -435,6 +435,63 @@ test('a request shows on the board as soon as it is sent, not when the turn ends
   expect((saved.get('s:' + ME) as any).summary.active).toEqual(['Adding a window setting'])
 })
 
+test('a side question answered before a tool call reaches the summary, so a finished side task leaves the board', async ($, on) => {
+  const prompts: string[] = []
+  const tail = [
+    'cut-off first line',
+    ask('apply the migration to sandbox'),
+    said('Starting the sandbox backup.'),
+    ran('Bash', { command: 'pg_dump sandbox' }),
+    result,
+    // A side question sent while it worked, answered in a note, then the planned work goes on
+    line({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt: 'side note: how much did the referrals put in?' } }),
+    said('Looking it up now.'),
+    // The answer, as thinking text shown while it works; an empty one is thinking it didn't show
+    line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '' }] } }),
+    line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'The referrals put in $172,500. Back to the sandbox migration now.' }] } }),
+    ran('Bash', { command: 'psql -f P021.sql' }),
+    result,
+    said('Fingerprints captured. Next I apply P021.'),
+  ].join('\n')
+  const { saved } = stubEngine(on, { prompts, tail })
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.tool.call({ tool: 'Bash', command: 'sleep 1', toolUseId: 'u1' }).catch(() => {})
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await waitFor(() => !!(saved.get('s:' + ME) as any)?.summary)
+  const prompt = prompts[prompts.length - 1]
+  expect(prompt).toContain('side note: how much did the referrals put in?')
+  // The answer and the return to the planned work, though they came before a tool call
+  expect(prompt).toContain("Assistant's notes along the way, oldest first:\n- Looking it up now.\n- The referrals put in $172,500. Back to the sandbox migration now.\n\nAssistant's final reply:\nFingerprints captured. Next I apply P021.")
+})
+
+test('a message sent mid-turn keeps the notes of the exchange it cut short, so a pause still shows', async ($, on) => {
+  const prompts: string[] = []
+  const queued = (prompt: string) => line({ type: 'attachment', attachment: { type: 'queued_command', commandMode: 'prompt', prompt } })
+  const tail = [
+    'cut-off first line',
+    ask('port the app to linux'),
+    said('Porting the window.'),
+    ran('Bash', { command: 'cargo build' }),
+    result,
+    queued('the export button is broken'),
+    said('Pausing the port to look at the export bug.'),
+    ran('Read', { file_path: '/x/export.js' }),
+    result,
+    said('Found it: the button posts to the old route.'),
+    queued('is it fixed yet?'),
+    said('Not yet, writing the fix now.'),
+  ].join('\n')
+  const { saved } = stubEngine(on, { prompts, tail })
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await waitFor(() => !!(saved.get('s:' + ME) as any)?.summary)
+  const prompt = prompts[prompts.length - 1]
+  expect(prompt).toContain('- Pausing the port to look at the export bug.')
+  expect(prompt).toContain("- Pausing the port to look at the export bug.\n\nAssistant's final reply:\nFound it: the button posts to the old route.")
+})
+
 test('the summary reads the last four exchanges, mid-turn messages included, and the final replies', async ($, on) => {
   const prompts: string[] = []
   const tail = [

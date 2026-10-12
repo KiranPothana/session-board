@@ -75,9 +75,9 @@ const APP_NAME = 'Session Board.app'
 
 const SUMMARY_SYSTEM = [
   'You keep a short to-do board for one Claude Code session: what the user would expect to see at a glance.',
-  "You get the session's last few exchanges, oldest first (each the user's request and the assistant's final reply), then the board as it was before.",
+  "You get the session's last few exchanges, oldest first (each the user's request and the assistant's final reply; for the latest, first its notes along the way, oldest first: what it said as it worked), then the board as it was before.",
   'Rebuild the board from the exchanges. Reply with JSON only: {"done": "...", "side": "...", "paused": "...", "active": [...], "pending": [...]}.',
-  'side: when the user raised something in the middle of other work that still has open steps (a bug they spotted, a quick question, a detour), the work the session is doing for it right now; paused: the planned work it set aside for it. Both "" otherwise, and both "" again once the side task is finished and the planned work goes on. The board shows them on their own lines: while there is a side task, active does not name it again and pending does not repeat the paused work.',
+  'side: when the user raised something in the middle of other work that still has open steps (a bug they spotted, a quick question, a detour), the work the session is doing for it right now; paused: the planned work it set aside for it. Both "" otherwise, and both "" again once the side task is finished and the planned work goes on. A request can be finished partway through a turn: when the notes show the assistant answered or finished the latest request and went back to earlier work, that request is done, side and paused are "", and the work it went back to is active. The board shows them on their own lines: while there is a side task, active does not name it again and pending does not repeat the paused work.',
   'done: the last piece of work the session finished, as one short line in plain words: what was achieved, not the commands run. "" when the exchanges show nothing finished yet.',
   'active: the work the session is doing now for the latest request, 0 to 2 items. When the latest request has no reply yet, or the assistant is still working on it, name that work, reading it in the light of the earlier exchanges (a "go ahead" continues what was planned). Work the assistant is still doing never waits on the user. When the latest reply is the assistant\'s final reply (its turn has ended), active is empty, even while a command or agent it left running goes on: the board shows those on their own line. What it will do once they finish (release after the tests pass) is pending, not active.',
   'pending: what is still to do, 0 to 5 items, the ones that wait on the user first. One item per piece of work: never split one piece of work into its steps.',
@@ -295,8 +295,11 @@ async function removedFor($, id) {
 }
 
 // The assistant's final reply in one exchange: its text after its last tool call. While it
-// is still working, its latest text so far.
-function finalReply(parts) {
+// is still working, its latest text so far. Notes (the thinking text it shows as it works) count
+// only when it wrote nothing else.
+function finalReply(all) {
+  const parts = all.filter((p) => !p.note)
+  if (!parts.some((p) => p.text?.trim())) return all.filter((p) => p.text?.trim()).pop()?.text ?? ''
   let lastTool = -1
   parts.forEach((p, i) => {
     if (p.tool) lastTool = i
@@ -305,6 +308,36 @@ function finalReply(parts) {
   if (after.length > 0) return after.join('\n')
   const texts = parts.map((p) => p.text).filter((t) => t?.trim())
   return texts[texts.length - 1] ?? ''
+}
+
+// An exchange's notes along the way: the assistant's text before tool calls and the thinking text
+// it shows as it works, each cut short, the last NOTES of them (its final reply is read on its
+// own). A side question is often answered, and the planned work picked up again, in such a note:
+// the final text alone misses both, and the board keeps showing a side task that's done.
+// The cut that follows (clip) keeps the start and the end: why it switched to a side task is
+// usually said first, and where it stands now last
+const NOTES = 40
+const NOTE_CHARS = 300
+const LATEST_NOTES_CHARS = 3000
+const OLDER_NOTES_CHARS = 800
+function notesOf(parts) {
+  const reply = finalReply(parts)
+  const short = (t) => {
+    const one = t.replace(/\s+/g, ' ').trim()
+    return one.length > NOTE_CHARS ? one.slice(0, NOTE_CHARS - 1) + '…' : one
+  }
+  return parts.map((p) => p.text).filter((t) => t?.trim() && !reply.includes(t)).slice(-NOTES).map(short)
+}
+
+// The exchanges a summary reads. Those of the turn still going on get their notes along the way:
+// the latest, and each one before it that a message sent mid-turn cut short (the turn went on
+// into the next exchange, so its "final" text isn't where it ended up). Older ones are read by
+// their final replies.
+function asExchanges(list) {
+  const recent = list.slice(-EXCHANGES)
+  let first = recent.length - 1
+  while (first > 0 && recent[first].midTurn) first--
+  return recent.map((x, i) => ({ ask: x.ask, reply: finalReply(x.parts), notes: i >= first ? notesOf(x.parts) : [] }))
 }
 
 // A request the user typed, without the reminders and context Claude Code and Claude Desktop
@@ -331,7 +364,7 @@ function exchangesFromMessages(msgs) {
     if (ask) out.push({ ask, parts: [] })
     else if (m.role === 'assistant' && out.length > 0) out[out.length - 1].parts.push({ text: m.text, tool: m.toolUses?.length > 0 })
   }
-  return out.slice(-EXCHANGES).map((x) => ({ ask: x.ask, reply: finalReply(x.parts) }))
+  return asExchanges(out)
 }
 
 // A reply cut to n characters, keeping its start and its end: replies tend to open with what
@@ -351,7 +384,9 @@ function summaryPrompt(before, removed, exchanges, pendingAsk, working = false, 
     const latest = i === exchanges.length - 1 && !pendingAsk
     const reply = clip(x.reply, latest ? LATEST_REPLY_CHARS : OLDER_REPLY_CHARS)
     const label = latest && working ? "Assistant, still working on it (its latest text so far)" : "Assistant's final reply"
-    return `User:\n${x.ask.slice(0, ASK_CHARS)}\n\n${label}:\n${reply || '(no reply yet)'}`
+    // What it said along the way, on its own allowance, so the final reply is cut no shorter
+    const notes = x.notes?.length ? `Assistant's notes along the way, oldest first:\n${clip(x.notes.map((n) => '- ' + n).join('\n'), latest ? LATEST_NOTES_CHARS : OLDER_NOTES_CHARS)}\n\n` : ''
+    return `User:\n${x.ask.slice(0, ASK_CHARS)}\n\n${notes}${label}:\n${reply || '(no reply yet)'}`
   })
   if (pendingAsk) turns.push(`User (latest request, no reply yet):\n${pendingAsk.slice(0, ASK_CHARS)}`)
   const conversation = turns.map((t, i) => `--- Exchange ${i + 1} of ${turns.length}\n${t}`).join('\n\n')
@@ -650,9 +685,9 @@ function exchangesFromTranscript(tail) {
   // The assistant's questions (AskUserQuestion) and plans (ExitPlanMode), by tool call id: the
   // user's answer to one comes back as that call's result, not as a typed message
   const asked = new Map()
-  const startExchange = (ask) => {
+  const startExchange = (ask, midTurn = false) => {
     // The same request recorded twice (queued, then delivered) is one exchange
-    if (ask && out[out.length - 1]?.ask !== ask) out.push({ ask, parts: [], lastTool: null })
+    if (ask && out[out.length - 1]?.ask !== ask) out.push({ ask, parts: [], lastTool: null, midTurn })
   }
   for (const d of entries) {
     if (d.isSidechain) continue
@@ -686,11 +721,13 @@ function exchangesFromTranscript(tail) {
       // came with images
       const prompt = d.attachment.prompt
       const text = Array.isArray(prompt) ? prompt.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : prompt
-      startExchange(typedText(text))
+      startExchange(typedText(text), true)
     } else if (d.type === 'assistant' && out.length > 0 && Array.isArray(c)) {
       const x = out[out.length - 1]
       for (const b of c) {
         if (b?.type === 'text') x.parts.push({ text: b.text, tool: false })
+        // Thinking it shows as it works (stored empty when it isn't shown): it can hold an answer
+        if (b?.type === 'thinking' && b.thinking?.trim()) x.parts.push({ text: b.thinking, tool: false, note: true })
         if (b?.type === 'tool_use') {
           x.parts.push({ text: '', tool: true })
           x.lastTool = b
@@ -707,7 +744,7 @@ function exchangesFromTranscript(tail) {
   }
   const last = out[out.length - 1]
   const step = last?.lastTool ? stepOf({ tool: last.lastTool.name, ...(last.lastTool.input ?? {}) }) : ''
-  return { exchanges: out.slice(-EXCHANGES).map((x) => ({ ask: x.ask, reply: finalReply(x.parts) })), step, count: out.length, ended, agents: [...running.values()].filter((r) => r.kind === 'agent').length,
+  return { exchanges: asExchanges(out), step, count: out.length, ended, agents: [...running.values()].filter((r) => r.kind === 'agent').length,
     workflows: [...running.values()].filter((r) => r.kind === 'workflow').length, pendingTool, title: customTitle || title }
 }
 
