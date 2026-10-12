@@ -7,7 +7,7 @@ import { DEFAULT_SHORTCUT, label as shortcutLabel, Recorder, clash, fromLegacy }
 
 const tauri = window.__TAURI__
 const invoke = (cmd, args) => (tauri ? tauri.core.invoke(cmd, args) : Promise.resolve(null))
-const VERSION = '0.2.0'
+const VERSION = '0.3.0'
 // Errors go to the app's log, since a webview's console can't be seen
 window.addEventListener('error', (e) => invoke('log', { msg: `board: ${e.message} at ${e.filename}:${e.lineno}` }))
 window.addEventListener('unhandledrejection', (e) => invoke('log', { msg: `board: ${e.reason?.message ?? e.reason}` }))
