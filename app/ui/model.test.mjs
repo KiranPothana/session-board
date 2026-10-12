@@ -179,3 +179,34 @@ test('one sound at a time: the most urgent, at most every 8 s, only switched-on 
   assert.equal(soundFor(ev, { soundsOn: false }), null)
   assert.equal(soundFor([{ kind: DONE }]), null)
 })
+
+import { focusedFrom, sameName, parseCrash } from './model.js'
+
+test('the session you are looking at', () => {
+  const rows = [{ id: 'a', name: 'Fix login', pid: 10, since: 50 }, { id: 'b', name: 'Fix login', pid: 11, since: 5 }, { id: 'c', name: 'Docs', pid: 12, since: 9 }]
+  assert.equal(sameName('Don’t panic', "don't  PANIC"), true)
+  // Desktop: by name, the most recent of two the same; a chat not on the board highlights nothing
+  assert.equal(focusedFrom({ desktopName: 'fix login' }, rows, null), 'b')
+  assert.equal(focusedFrom({ desktopName: 'Something else' }, rows, 'c'), null)
+  assert.equal(focusedFrom({ desktopName: null }, rows, 'c'), undefined)
+  // Terminal: by pid; of several, the one the window title names; else keep the current one
+  assert.equal(focusedFrom({ pids: [12], title: 'zsh' }, rows, null), 'c')
+  assert.equal(focusedFrom({ pids: [10, 12], title: '✳ Docs' }, rows, null), 'c')
+  assert.equal(focusedFrom({ pids: [10, 12], title: 'zsh' }, rows, 'a'), 'a')
+  assert.equal(focusedFrom({ pids: [], title: 'Safari' }, rows, 'a'), undefined)
+  assert.equal(focusedFrom(null, rows, 'a'), undefined)
+})
+
+test('crash reports: the exception and the crashed thread, from an .ips or a panic', () => {
+  const ips = '{"app_name":"session-board"}\n' + JSON.stringify({
+    exception: { type: 'EXC_BREAKPOINT', signal: 'SIGTRAP' }, usedImages: [{ name: 'session-board' }],
+    threads: [{ frames: [] }, { triggered: true, frames: [{ imageIndex: 0, symbol: 'main', sourceFile: 'main.rs', sourceLine: 9 }] }],
+  })
+  const c = parseCrash('ips', ips, { at: 0, version: '0.2.0', os: 'macos' })
+  assert.equal(c.title, 'Window app crashed: EXC_BREAKPOINT')
+  assert.match(c.details, /session-board main \(main\.rs:9\)/)
+  assert.match(c.details, /- Session Board: 0\.2\.0/)
+  const p = parseCrash('panic', "panicked at src/main.rs:5:1:\nboom\n\nSession Board 0.2.0", { at: 0 })
+  assert.equal(p.title, 'Window app crashed: src/main.rs:5:1:')
+  assert.equal(parseCrash('ips', 'not json'), null)
+})

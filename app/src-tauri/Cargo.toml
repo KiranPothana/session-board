@@ -15,6 +15,7 @@ tauri-plugin-global-shortcut = "=2.4.0"
 tauri-plugin-opener = "=2.6.0"
 serde = { version = "1", features = ["derive"] }
 active-win-pos-rs = "=0.11.0"
+sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 serde_json = "1"
 
 [profile.release]
@@ -27,4 +28,9 @@ strip = true
 # On macOS the windows are put on screen without activating the app, as the SwiftUI panel did
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = "=2.1.0"
+objc2-application-services = { version = "=0.3.2", default-features = false, features = ["std", "libc", "AXUIElement", "AXError", "HIServices", "AXAttributeConstants", "AXRoleConstants"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFString", "CFArray", "CFBase", "CFNumber", "CFDictionary"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
 

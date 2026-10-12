@@ -13,6 +13,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod platform;
+
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,11 +94,29 @@ fn read_state() -> Value {
     if test_toast.is_some() {
         let _ = fs::remove_file(shared.join("test-toast"));
     }
+    let registry = json_files(&claude.join("sessions"), |_| true);
+    // Project names for the registry's folders, and the commands each session left running
+    let home = home();
+    let mut projects = Map::new();
+    let mut sessions = vec![];
+    for entry in registry.values() {
+        if let Some(cwd) = entry.get("cwd").and_then(Value::as_str) {
+            projects.insert(cwd.to_string(), json!(platform::project_name(cwd, &home)));
+        }
+        if let (Some(id), Some(started)) = (entry.get("sessionId").and_then(Value::as_str), entry.get("startedAt").and_then(Value::as_u64)) {
+            sessions.push((id.to_string(), started));
+        }
+    }
+    let procs = platform::processes();
     json!({
         "platform": std::env::consts::OS,
+        "projects": projects,
+        "jobs": platform::jobs(&procs, &sessions),
+        "desktopRunning": platform::desktop_running(&procs),
+        "accessibility": accessibility(),
         "now": millis(SystemTime::now()),
         "store": json_files(&claude.join("plugins/store"), |n| n.starts_with("session-board_")),
-        "registry": json_files(&claude.join("sessions"), |_| true),
+        "registry": registry,
         "settings": read_json(&shared.join("settings.json")).unwrap_or(json!({})),
         "removed": read_json(&shared.join("removed.json")).unwrap_or(json!({})),
         "showRequest": show_request,
@@ -279,6 +299,38 @@ fn log(msg: String) {
     eprintln!("[page] {msg}");
 }
 
+// Whether this app may read Claude Desktop's open session (macOS Accessibility); always on elsewhere
+fn accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    return platform::mac::trusted();
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+// Shows macOS's Accessibility prompt for this app (once, from the page)
+#[tauri::command]
+fn ask_accessibility() {
+    #[cfg(target_os = "macos")]
+    platform::mac::ask_trust();
+}
+
+// What's in front: the session Claude Desktop shows, or the sessions under the terminal in front
+#[tauri::command]
+async fn focus(pids: Vec<u32>) -> Value {
+    platform::focus(&pids)
+}
+
+#[tauri::command]
+async fn open_session(app: AppHandle, id: String, bridge_id: String, is_desktop: bool, pid: Option<u32>) {
+    platform::open_session(&app, &id, &bridge_id, is_desktop, pid);
+}
+
+// The newest crash since the last one offered
+#[tauri::command]
+fn read_crash(since: u64) -> Value {
+    platform::newest_crash(&shared_dir(), since)
+}
+
 // This app's process id, so the page can tell its own window being in front from another app's
 #[tauri::command]
 fn own_pid() -> u32 {
@@ -286,6 +338,7 @@ fn own_pid() -> u32 {
 }
 
 fn main() {
+    platform::record_panics(shared_dir());
     let builder = tauri::Builder::default();
     // Starting never takes the focus from the app you're in (with LSUIElement in Info.plist, as
     // the SwiftUI app had: a background app with no Dock icon)
@@ -296,7 +349,7 @@ fn main() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![read_state, write_shared, set_tray, show_board, set_shortcut, front_app, own_pid, log, show_window, set_toasts_visible])
+        .invoke_handler(tauri::generate_handler![read_state, write_shared, set_tray, show_board, set_shortcut, front_app, own_pid, log, show_window, set_toasts_visible, ask_accessibility, focus, open_session, read_crash])
         .setup(|app| {
 
             let show = MenuItem::with_id(app, "toggle", "Show or hide the window", true, None::<&str>)?;

@@ -1,7 +1,7 @@
 // The board page: reads what the window side hands it every 2 seconds, builds the rows with
 // model.js and draws them. In a plain browser (no Tauri) it draws sample sessions instead, which is
 // how its layout is checked with screenshots.
-import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, sessionText, assignColors, inkFor, ago, SWATCHES, isQuiet, Attention, soundFor, popupDetail, NEEDS_YOU, DONE } from './model.js'
+import { buildRows, partition, autoRestore, shownName, sharedPrefixes, cardLines, sessionText, assignColors, inkFor, ago, SWATCHES, isQuiet, Attention, soundFor, popupDetail, NEEDS_YOU, DONE, focusedFrom, parseCrash } from './model.js'
 import { sampleState } from './sample.js'
 
 const tauri = window.__TAURI__
@@ -12,6 +12,8 @@ window.addEventListener('error', (e) => invoke('log', { msg: `board: ${e.message
 window.addEventListener('unhandledrejection', (e) => invoke('log', { msg: `board: ${e.reason?.message ?? e.reason}` }))
 const REPO = 'https://github.com/KiranPothana/session-board'
 const DEFAULT_SHORTCUT = 'Ctrl+Alt+S'
+// Session Board's report inbox (reports-worker/): files a report privately, no GitHub account needed
+const INBOX = 'https://session-board-reports.kiran-987.workers.dev/report'
 const UNDO_MS = 6000
 // The sounds every system has, bundled with the app: id -> [name, file]
 const SOUNDS = {
@@ -31,7 +33,7 @@ const TERMINALS = ['terminal', 'iterm2', 'ghostty', 'warp', 'wezterm', 'wezterm-
 // ---- What the window keeps between launches (the macOS app's UserDefaults)
 const PREFS_KEY = 'session-board-prefs'
 const prefs = Object.assign(
-  { collapsed: false, dismissed: [], dismissedAt: {}, sessionColors: {}, autoColors: {}, theme: null, regularWindow: false, hideWhenAway: true, terminalsCount: true, soundsOn: true, removedItems: {}, handledShowRequest: 0, shortcut: DEFAULT_SHORTCUT, userHidden: false, soundMoments: [true, true, false], soundChoices: DEFAULT_SOUNDS, alertVolume: 0.5 },
+  { collapsed: false, dismissed: [], dismissedAt: {}, sessionColors: {}, autoColors: {}, theme: null, regularWindow: false, hideWhenAway: true, terminalsCount: true, soundsOn: true, removedItems: {}, handledShowRequest: 0, shortcut: DEFAULT_SHORTCUT, userHidden: false, soundMoments: [true, true, false], soundChoices: DEFAULT_SOUNDS, alertVolume: 0.5, askedAccessibility: false, crashSeenAt: 0 },
   (() => { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) ?? {} } catch { return {} } })(),
 )
 const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch {} }
@@ -49,6 +51,8 @@ async function read() {
   const rows = buildRows({ store: snap.store, registry: snap.registry, registryReadable: snap.registryReadable !== false, projects: snap.projects ?? {}, now: snap.now })
   state = { rows, shared: { summaries: true, projectNames: true, renameSessions: false, ...snap.settings }, platform: snap.platform, jobs: snap.jobs ?? {} }
   ui.testing = !!snap.testing
+  ui.accessibility = snap.accessibility !== false
+  ui.desktopRunning = !!snap.desktopRunning
   ui.claudeTheme = snap.claudeTheme === 'dark' || snap.claudeTheme === 'light' ? snap.claudeTheme : null
   prefs.dismissed = autoRestore(rows, prefs.dismissed, prefs.dismissedAt, snap.now)
   // Forget sessions that are gone, but never on an empty read
@@ -300,7 +304,7 @@ function render() {
   let body = ''
   if (ui.settings) body = settingsPage()
   else if (!prefs.collapsed) {
-    const list = p.shown.length ? `<div class="list" id="list">${p.shown.map((r, i) => card(r, i + 1, prefixes[r.id], dark)).join('')}</div>` : EMPTY
+    const list = notes() + (p.shown.length ? `<div class="list" id="list">${p.shown.map((r, i) => card(r, i + 1, prefixes[r.id], dark)).join('')}</div>` : EMPTY)
     const undo = ui.undo ? `<div class="undo"><span>${esc(ui.undo.name)} dismissed</span><button data-action="undo">Undo</button></div>` : ''
     body = list + undo + dismissedSection(p)
   }
@@ -319,9 +323,76 @@ function setShared(key, value) {
 }
 const writeRemoved = () => invoke('write_shared', { name: 'removed.json', text: JSON.stringify(prefs.removedItems, null, 2) })
 
+// Takes you to a session (in Claude Desktop, its terminal tab, or the app it runs in); its popup
+// has done its job
 function openSession(row) {
-  // Remote Control sessions open in the browser (or Claude Desktop, which takes claude.ai links)
-  if (row.bridgeId) invoke('plugin:opener|open_url', { url: `https://claude.ai/code/${row.bridgeId}` })
+  tauri?.event.emitTo('toasts', 'toast-remove', row.id)
+  invoke('open_session', { id: row.id, bridgeId: row.bridgeId, isDesktop: row.isDesktop, pid: row.pid ?? null })
+}
+
+// ---- The session you're looking at: its card gets the highlight and stays at the top
+async function followFocus() {
+  const pids = state.rows.map((r) => r.pid).filter(Boolean)
+  const front = await invoke('focus', { pids }).catch(() => null)
+  const id = focusedFrom(front, state.rows, ui.focusedId)
+  if (id === undefined || id === ui.focusedId) return
+  ui.focusedId = id
+  ui.userScrolled = false
+  // You're there now: its popup has done its job
+  if (id) tauri?.event.emitTo('toasts', 'toast-remove', id)
+  render()
+  if (id) document.querySelector(`[data-card="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+}
+
+// ---- A crash since the last one offered: one click sends it to the team
+async function checkCrash() {
+  // The first run only notes the time, so crashes from before the prompt are never offered
+  if (!prefs.crashSeenAt) { prefs.crashSeenAt = Date.now(); savePrefs(); return }
+  const found = await invoke('read_crash', { since: prefs.crashSeenAt }).catch(() => null)
+  if (!found) return
+  ui.crash = parseCrash(found.kind, found.text, { at: found.at, version: VERSION, os: state.platform })
+  render()
+}
+
+async function sendCrash() {
+  const crash = ui.crash
+  if (!crash) return
+  ui.crashSending = true
+  render()
+  let sent = false
+  try {
+    const res = await fetch(INBOX, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'crash', source: 'crash', title: crash.title, body: crash.details }) })
+    sent = res.status === 201 && (await res.json()).ok === true
+  } catch {}
+  ui.crashSending = false
+  if (sent) {
+    ui.crashSent = true
+    render()
+    setTimeout(closeCrash, 3000)
+  } else {
+    invoke('plugin:opener|open_url', { url: `${REPO}/issues/new?` + new URLSearchParams({ title: 'Crash: ' + crash.title, body: crash.details }) })
+    closeCrash()
+  }
+}
+
+function closeCrash() {
+  if (ui.crash) prefs.crashSeenAt = Math.max(prefs.crashSeenAt, ui.crash.at)
+  ui.crash = null
+  ui.crashSent = false
+  savePrefs()
+  render()
+}
+
+function notes() {
+  let out = ''
+  if (ui.crash) {
+    out += `<div class="note"><div class="t"><span class="dot" style="background:var(${ui.crashSent ? '--green' : '--amber'})"></span>${ui.crashSent ? 'Sent. Thanks for the report.' : 'Session Board quit unexpectedly'}</div>${ui.crashSent ? '' : `<p>Send the crash details to the Session Board team? Nothing from your sessions is included.</p><div class="btns"><button class="quiet-btn" data-action="crash-send">${ui.crashSending ? 'Sending…' : 'Report'}</button><button class="quiet-btn" data-action="crash-close">Not now</button></div>`}</div>`
+  }
+  // macOS only: reading which chat Claude Desktop has open needs the Accessibility permission
+  if (state.platform === 'macos' && !ui.accessibility && ui.desktopRunning) {
+    out += `<div class="note"><div class="t" style="font-weight:400;font-size:11.5px;color:var(--soft)">Turn on <b style="margin:0 3px">Session Board</b> in Accessibility<span style="flex:1"></span><button class="quiet-btn" data-action="accessibility">Open Settings</button></div></div>`
+  }
+  return out
 }
 
 function feedbackUrl(kind) {
@@ -366,6 +437,9 @@ document.addEventListener('click', (e) => {
     case 'chooser': ui.openChooser = ui.openChooser === Number(el.dataset.m) ? null : Number(el.dataset.m); break
     case 'choose-sound': prefs.soundChoices = prefs.soundChoices.map((c, i) => (i === Number(el.dataset.m) ? v : c)); play(v); break
     case 'play': play(v); return
+    case 'crash-send': sendCrash(); return
+    case 'crash-close': closeCrash(); return
+    case 'accessibility': invoke('ask_accessibility'); invoke('plugin:opener|open_url', { url: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility' }); return
     case 'feedback': invoke('plugin:opener|open_url', { url: feedbackUrl(v) }); if (!tauri) window.open(feedbackUrl(v)); return
   }
   savePrefs()
@@ -407,6 +481,18 @@ if (tauri) {
     invoke('log', { msg: `board visible=${await w.isVisible()} at ${JSON.stringify(await w.outerPosition())} size ${JSON.stringify(await w.outerSize())}` })
   }, 4000)
   setInterval(() => followFrontApp().catch(() => {}), 500)
+  setInterval(() => followFocus().catch(() => {}), 750)
+  setTimeout(() => checkCrash().catch(() => {}), 1500)
+  // macOS: ask once for the Accessibility permission the Desktop highlight needs
+  setTimeout(() => {
+    if (state.platform === 'macos' && !ui.accessibility && !prefs.askedAccessibility && !ui.testing) {
+      prefs.askedAccessibility = true
+      savePrefs()
+      invoke('ask_accessibility')
+    }
+  }, 3000)
+  // Scrolling the list yourself stops it following the session you're looking at, until you switch
+  document.addEventListener('wheel', () => { ui.userScrolled = true }, { passive: true })
 }
 read()
 setInterval(() => read().catch(() => {}), 2000)

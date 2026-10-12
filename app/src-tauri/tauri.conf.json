@@ -41,7 +41,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' asset: http://asset.localhost"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost https://session-board-reports.kiran-987.workers.dev"
     },
     "macOSPrivateApi": true
   },

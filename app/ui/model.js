@@ -333,3 +333,69 @@ export function popupDetail(kind, row) {
   if (kind === YOUR_TURN) return row.items.find((i) => i.waitsOnYou)?.text ?? 'Your turn'
   return row.justDid || 'Done'
 }
+
+// ---- Which card is the session you're looking at
+
+// Two session names are the same one: case, spacing and curly or straight quotes aside
+export function sameName(a, b) {
+  const plain = (s) => String(s ?? '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').toLowerCase().split(/\s+/).filter(Boolean).join(' ')
+  return plain(a) === plain(b)
+}
+
+// From what the window side says is in front, the session you're looking at: the one Claude Desktop
+// shows (by name; of two the same, the one active most recently), or the one under the terminal in
+// front (by pid; of several, the one the window title names). `undefined` keeps the current one.
+export function focusedFrom(front, rows, current) {
+  if (!front) return undefined
+  if ('desktopName' in front) {
+    if (front.desktopName == null) return undefined
+    const hits = rows.filter((r) => sameName(r.name, front.desktopName)).sort((a, b) => a.since - b.since)
+    // The chat open in Desktop isn't on the board: highlight nothing rather than the wrong one
+    return hits[0]?.id ?? null
+  }
+  const hits = rows.filter((r) => r.pid && (front.pids ?? []).includes(r.pid))
+  if (hits.length === 1) return hits[0].id
+  if (hits.length > 1) {
+    const title = String(front.title ?? '').toLowerCase()
+    const named = hits.filter((r) => r.name && title.includes(r.name.toLowerCase()))
+    if (named.length === 1) return named[0].id
+    if (hits.some((r) => r.id === current)) return current
+  }
+  return undefined
+}
+
+// ---- Crash reports, as the crash prompt sends them: the exception and the top of the crashed
+// thread, never anything from the sessions
+
+export function parseCrash(kind, text, { at = Date.now(), version = '', os = '' } = {}) {
+  const when = new Date(at).toISOString()
+  const footer = `\n- Session Board: ${version}\n- OS: ${os}`
+  if (kind === 'panic') {
+    const lines = String(text).split('\n')
+    const first = lines.find((l) => l.trim()) ?? 'panic'
+    return {
+      at,
+      title: 'Window app crashed: ' + first.replace(/^panicked at /, '').slice(0, 80),
+      details: `### The window app crashed\n\nA panic at ${when}\n\n\`\`\`\n${lines.slice(0, 60).join('\n')}\n\`\`\`\n${footer}`,
+    }
+  }
+  // An .ips file is a line of JSON (the header) and then the report as JSON
+  const nl = String(text).indexOf('\n')
+  let body
+  try {
+    body = JSON.parse(String(text).slice(nl + 1))
+  } catch {
+    return null
+  }
+  const type = body.exception?.type ?? 'crash'
+  const signal = body.exception?.signal ?? ''
+  const images = body.usedImages ?? []
+  const thread = (body.threads ?? []).find((t) => t.triggered) ?? {}
+  const frames = (thread.frames ?? []).slice(0, 10).map((f) => `    ${images[f.imageIndex]?.name ?? '?'} ${f.symbol ?? '?'}${f.sourceLine ? ` (${f.sourceFile ?? '?'}:${f.sourceLine})` : ''}`)
+  const messages = Object.values(body.asi ?? {}).flat().filter((m) => typeof m === 'string')
+  return {
+    at,
+    title: `Window app crashed: ${type}`,
+    details: `### The window app crashed\n\n${type} ${signal} at ${when}\n${messages.length ? '\n' + messages.join('\n') + '\n' : ''}\n\`\`\`\n${frames.join('\n')}\n\`\`\`\n${footer}`,
+  }
+}
