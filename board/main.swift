@@ -2927,6 +2927,23 @@ struct BoardView: View {
 // The floating board's default size, tall enough for four or five cards
 let defaultSize = NSSize(width: 330, height: 705)
 
+// The window's first frame, as a share of the screen's usable area, so it fits any screen the
+// way it does on the Mac it was tuned on: there the floating board is 330 x 705, flush with the
+// right edge and its top 23% of the way down, on 1728 x 1025; a regular window is 764 x 458,
+// centred. (app/ui/geometry.js does the same on Windows and Linux.)
+func defaultFrame(on s: NSRect, regular: Bool) -> NSRect {
+    func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { max(lo, min(hi, v)) }
+    if regular {
+        let w = round(clamp(s.width * 764 / 1728, 560, min(1100, s.width)))
+        let h = round(clamp(s.height * 458 / 1025, 360, min(760, s.height)))
+        return NSRect(x: round(s.midX - w / 2), y: round(s.midY - h / 2), width: w, height: h)
+    }
+    let w = round(clamp(s.width * 330 / 1728, 300, min(520, s.width)))
+    let h = round(clamp(s.height * 705 / 1025, 420, min(900, s.height)))
+    let top = round(clamp(s.maxY - s.height * 235 / 1025, s.minY + h, s.maxY))
+    return NSRect(x: s.maxX - w, y: top - h, width: w, height: h)
+}
+
 // A wider grab band along the window's four edges, and larger corners, for resizing: the
 // system's own band is a few points wide, and the cards run right to the edge. Everywhere
 // else, clicks go through to the board.
@@ -3383,14 +3400,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ])
         panel.contentView = background
 
-        // Where this kind was last put; the first time, the floating board against the right
-        // edge of the screen, centred top to bottom, and the regular window in the middle
+        // Where this kind was last put; the first time, sized and placed for this screen
         if !panel.setFrameUsingName(frameName), let screen = NSScreen.main?.visibleFrame {
-            if regular {
-                panel.center()
-            } else {
-                panel.setFrameOrigin(NSPoint(x: screen.maxX - defaultSize.width - 16, y: screen.midY - defaultSize.height / 2))
-            }
+            panel.setFrame(defaultFrame(on: screen, regular: regular), display: false)
         }
         panel.setFrameAutosaveName(frameName)
         panel.minSize = NSSize(width: 260, height: board.collapsed ? collapsedHeight : 160)
