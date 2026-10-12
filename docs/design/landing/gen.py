@@ -125,7 +125,7 @@ def commands(bg='#0B0B0C', border='#2A2B2E', prompt='#5D5E63', text='#E6E6E9', b
     return f'<div style="background: {bg}; border: 1px solid {border}; border-radius: 12px; overflow: hidden">{rows}</div>'
 
 
-REQS = 'macOS 15+ · Claude Code 2.1.287+ · Apple’s command-line tools'
+REQS = 'Claude Code 2.1.287+ · macOS 15+, Windows 10/11 or Linux'
 
 BASE_CSS = '''
 body{margin:0}

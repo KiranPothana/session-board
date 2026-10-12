@@ -2,7 +2,7 @@
 
 **[sessionboard.dev](https://sessionboard.dev)**
 
-**A Claude Code mod: every Claude Code session on your Mac, in one window.**
+**A Claude Code mod: every Claude Code session on your computer, in one window.** Mac, Windows and Linux.
 ✓ what it did · ▶ what it's doing · ○ what's next · what's waiting on you.
 
 <details><summary><b>Copy for AI</b>: paste this into Claude and it explains Session Board and installs it for you</summary>
@@ -14,9 +14,9 @@ I'd like to try Session Board. Read this, explain it to me in two short lines (I
 
 # Session Board (https://sessionboard.dev)
 
-Free, open source (MIT) Claude Code plugin for the Mac: https://github.com/KiranPothana/session-board
+Free, open source (MIT) Claude Code plugin for Mac, Windows and Linux: https://github.com/KiranPothana/session-board
 
-What it is: one small floating window that lists every Claude Code chat running on this Mac (terminal, Remote Control, Claude Desktop). Each chat gets a card that keeps a live stand-up:
+What it is: one small floating window that lists every Claude Code chat running on this computer (terminal, Remote Control, Claude Desktop). Each chat gets a card that keeps a live stand-up:
 - ✓ what it just finished
 - ▶ what it's doing now
 - ○ what's next, with "waits on you" on anything blocked on me
@@ -29,16 +29,16 @@ Also:
 - Control-Option-S shows or hides the window.
 - Optional sounds; light and dark.
 
-Needs: macOS 15+, Claude Code 2.1.287+, Apple's command-line tools (`xcode-select --install`).
+Needs: Claude Code 2.1.287+, and macOS 15+ with Apple's command-line tools (`xcode-select --install`), Windows 10/11, or a 64-bit Linux desktop.
 
 Install (run these for me):
 ```sh
 claude plugin marketplace add KiranPothana/session-board
 claude plugin install session-board@session-board
 ```
-Then I start a new Claude Code session, or type /session-board in one. The first time, it builds the window app on my Mac (under a minute) and opens it. Chats already running show up too.
+Then I start a new Claude Code session, or type /session-board in one. The first time, it gets the window app ready (on a Mac it builds it in under a minute; on Windows and Linux it downloads it and checks its checksum) and opens it. Chats already running show up too.
 
-Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my Mac. Bug reports are sent only when I say "report" (or click Report), and never include anything from my chats.
+Cost: the summaries are small Sonnet calls billed to my Claude account (about 2,000 tokens in, a few per turn). They can be turned off in Settings. Everything else stays on my computer. Bug reports are sent only when I say "report" (or click Report), and never include anything from my chats.
 
 Update: `claude plugin update session-board@session-board`. Uninstall: `claude plugin uninstall session-board@session-board`, then quit it from the menu bar.
 
@@ -51,9 +51,9 @@ Something wrong or an idea? Tell Claude in any session and say "report", or open
 
 ## In more words
 
-One floating window on your Mac that lists every Claude Code session you have running (in the terminal, over Remote Control, and in Claude Desktop) with what each one is working on, what is still to do, and which ones need you.
+One floating window on your computer (Mac, Windows or Linux) that lists every Claude Code session you have running (in the terminal, over Remote Control, and in Claude Desktop) with what each one is working on, what is still to do, and which ones need you.
 
-It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) plus a small native macOS app that the plugin builds on your Mac the first time you use it.
+It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) plus a small window app: on a Mac a native one the plugin builds the first time you use it, on Windows and Linux one the plugin downloads (and checks) the first time.
 
 ## What you get
 
@@ -84,9 +84,24 @@ You don't need Claude Desktop. With terminal sessions only, the window works the
 
 ## Requirements
 
-- **macOS 15 or later.**
-- **Claude Code 2.1.287 or later**, the first version with mods. It's tested with 2.1.293 on macOS 27, and the mods API can still change between Claude Code releases.
-- **Apple's command-line tools**, to build the window app on your Mac. Install them with `xcode-select --install`. It's tested with Swift 6.4.
+- **Claude Code 2.1.287 or later**, the first version with mods. It's tested with 2.1.296, and the mods API can still change between Claude Code releases.
+- **Mac:** macOS 15 or later, and Apple's command-line tools to build the window app (`xcode-select --install`). It's tested with Swift 6.4 on macOS 27.
+- **Windows:** Windows 10 or 11 (64-bit), with the WebView2 runtime that comes with them. *New in 0.2.0: tested on GitHub's Windows build machines, not yet by people.*
+- **Linux:** a 64-bit desktop with X11, or Wayland with the limits below. The app is an AppImage. *New in 0.2.0, as Windows.*
+
+### What works where
+
+Everything works on a Mac. On Windows and Linux, the board, summaries, popups, sounds, dismiss, colours and Settings
+are the same; some things depend on what the system lets an app see:
+
+| | Mac | Windows | Linux X11 | Linux Wayland |
+|---|---|---|---|---|
+| Floats over other windows, shortcut from any app | yes | yes | yes | no: open it from the tray |
+| Highlights the Claude Desktop chat you're in | yes | yes | (no Claude Desktop) | no |
+| Highlights the terminal session you're in | Terminal, iTerm2 by tab; others by window | by window | by window | no |
+| Click a name to go to a terminal session | its tab (Terminal, iTerm2), else its app | its app | its app (with `xdotool`) | no |
+| Hide when you switch away from Claude | yes | yes | yes | no |
+| Your own shortcut, right-hand modifier taps, your own sounds | yes | not yet | not yet | not yet |
 
 ## Install
 
@@ -97,14 +112,15 @@ claude plugin install session-board@session-board
 
 Then start a new Claude Code session, or type `/session-board` in one.
 
-- The first time, the plugin builds the window app into `~/Applications/Session Board.app` (under a minute) and opens it. It builds again only when an update changes the app's source.
+- **Mac:** the first time, the plugin builds the window app into `~/Applications/Session Board.app` (under a minute) and opens it. It builds again only when an update changes the app's source.
+- **Windows and Linux:** the first time, the plugin downloads the window app from this repo's release for its version, checks it against the SHA-256 in `app/release.json` (part of the plugin; a download that doesn't match is thrown away), and starts it. Windows: `%LOCALAPPDATA%\Programs\Session Board`. Linux: `~/.local/share/session-board/app`.
 - Sessions that were already running show up too, with no restart. Once one session runs the plugin, it reads the others' saved conversations every 30 seconds.
 
 To update: `claude plugin update session-board@session-board`.
 
 ## Permissions
 
-The window asks for these permissions:
+On a Mac the window asks for these permissions (Windows and Linux ask for none):
 
 - **Accessibility**, to read which session Claude Desktop has open, for the highlight. Without it, everything else still works. It's in System Settings → Privacy & Security → Accessibility.
 - **Automation for Terminal or iTerm2**, asked the first time one of them is in front, for the highlight there.

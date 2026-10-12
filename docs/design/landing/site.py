@@ -25,7 +25,7 @@ h0 = body.index('<section class="a-hero"')
 h1 = body.index('</section>', h0) + len('</section>')
 hero = f"""<section class="hs" style="padding: 24px 0 88px">
 <div class="hs-head">
-<span style="font: 700 11px {MONO}; letter-spacing: 0.14em; color: {GREEN}">CLAUDE CODE MOD · MAC · OPEN SOURCE</span>
+<span style="font: 700 11px {MONO}; letter-spacing: 0.14em; color: {GREEN}">CLAUDE CODE MOD · MAC · WINDOWS · LINUX</span>
 <h1 class="hs-h1">Know what every session is doing.<br><span style="color: #7C7D83">Without opening one.</span></h1>
 <p class="hs-sub">One floating window gives each Claude Code chat a live stand-up: what it just did, what it’s doing, what’s next, and what’s waiting on you.</p>
 <div style="display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap">
@@ -144,7 +144,7 @@ LD = _json.dumps({
     '@context': 'https://schema.org', '@type': 'SoftwareApplication', 'name': 'Session Board',
     'alternateName': 'Session Board for Claude Code', 'description': DESC, 'url': URL,
     'applicationCategory': 'DeveloperApplication', 'applicationSubCategory': 'Claude Code mod',
-    'operatingSystem': 'macOS 15 or later', 'license': 'https://opensource.org/licenses/MIT',
+    'operatingSystem': 'macOS 15 or later, Windows 10 or 11, Linux', 'license': 'https://opensource.org/licenses/MIT',
     'isAccessibleForFree': True, 'offers': {'@type': 'Offer', 'price': '0', 'priceCurrency': 'USD'},
     'codeRepository': GH, 'image': URL + 'hero.jpg',
     'keywords': 'Claude Code mod, Claude Code plugin, Claude Code sessions, Claude Desktop, Remote Control, macOS',
