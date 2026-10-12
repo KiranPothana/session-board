@@ -1,0 +1,21 @@
+name: Something's wrong
+description: Session Board isn't doing what you expected
+title: "Bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead. A screenshot helps; blur anything private.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "Session Board (Settings, at the bottom), macOS, and `claude --version`"
+      placeholder: "Session Board 0.1.0 · macOS 15.4 · Claude Code 2.1.296"
+  - type: markdown
+    attributes:
+      value: "Faster next time: tell Claude in any session what's wrong with Session Board, and say **report**. It fills all of this in for you."

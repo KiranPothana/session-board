@@ -2254,6 +2254,41 @@ struct SectionLabel: View {
 }
 
 // Settings, its own page (‹ Sessions goes back)
+let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
+
+enum FeedbackKind { case bug, idea }
+
+// A new GitHub issue, opened in the browser with the versions and settings filled in (never
+// anything from the sessions), for the user to describe what happened and send
+func openFeedback(_ kind: FeedbackKind, board: Board) {
+    let os = ProcessInfo.processInfo.operatingSystemVersion
+    var arch = utsname()
+    uname(&arch)
+    let machine = withUnsafeBytes(of: &arch.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+    let settings = [
+        "theme=\(board.themeChoice ?? "auto")", "regularWindow=\(board.regularWindow)", "hideWhenAway=\(board.hideWhenAway)",
+        "terminalsCount=\(board.terminalsCount)", "soundsOn=\(board.soundsOn)", "summaries=\(board.summaries)",
+        "accessibility=\(board.canReadDesktop)",
+    ].joined(separator: ", ")
+    let body = """
+    \(kind == .bug ? "### What happened\n\n\n\n### What you expected" : "### The idea")
+
+
+    <details><summary>Details sent with the report</summary>
+
+    - Session Board: \(appVersion)
+    - macOS: \(os.majorVersion).\(os.minorVersion).\(os.patchVersion) (\(machine))
+    - Settings: \(settings)
+    - Sessions on the board: \(board.rows.count)
+    </details>
+
+    _Sent from the Session Board window._
+    """
+    var url = URLComponents(string: "https://github.com/KiranPothana/session-board/issues/new")!
+    url.queryItems = [URLQueryItem(name: "title", value: kind == .bug ? "Bug: " : "Idea: "), URLQueryItem(name: "body", value: body)]
+    if let link = url.url { NSWorkspace.shared.open(link) }
+}
+
 struct SettingsPage: View {
     @ObservedObject var board: Board
     let p: Palette
@@ -2392,8 +2427,23 @@ struct SettingsContent: View {
                         }
                         .padding(.top, 2)
                     }
+                }
+                .settingsCell(p)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    SectionLabel(text: "FEEDBACK", p: p)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Something wrong, or an idea?").font(.system(size: 13, weight: .semibold)).foregroundStyle(p.text)
+                        Text("Opens GitHub with your versions filled in. Or tell Claude in any session, and say report.")
+                            .font(.system(size: 11.5)).foregroundStyle(p.muted).fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 8) {
+                        QuietButton(title: "Report a problem", p: p) { openFeedback(.bug, board: board) }
+                        QuietButton(title: "Suggest an idea", p: p) { openFeedback(.idea, board: board) }
+                    }
+                    .padding(.top, 4)
                     HStack {
-                        Text("Session Board " + ((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""))
+                        Text("Session Board " + appVersion)
                         Spacer()
                     }
                     .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(p.prefix).padding(.top, 14)
@@ -3469,6 +3519,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: "")
             settings.target = self
             menu.addItem(settings)
+            let report = NSMenuItem(title: "Report a Problem…", action: #selector(reportProblem), keyEquivalent: "")
+            report.target = self
+            menu.addItem(report)
             menu.addItem(.separator())
             menu.addItem(NSMenuItem(title: "Quit Session Board", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
             statusItem.menu = menu
@@ -3482,6 +3535,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func show() { panel.orderFrontRegardless() }
 
     @objc func toggleFromMenu() { toggleWindow() }
+
+    @objc func reportProblem() { openFeedback(.bug, board: board) }
 
     @objc func openSettings() {
         board.collapsed = false

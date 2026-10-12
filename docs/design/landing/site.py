@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """The Session Board landing page (direction A, approved 2026-10-11) as a standalone site:
-the approved board's markup, with the Claude Motion film in the hero."""
+the approved board's markup, with a live hero where four chats feed the board, and a
+"Copy for AI" button that copies docs/ai-overview.md (also published as llms.txt and kept in
+the README between its ai-overview markers).
+
+    python3 docs/design/landing/site.py        # rebuilds site/ and the README's copy"""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'site')
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(HERE, '..', '..', '..'))
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'site')
+AI_TEXT = open(os.path.join(ROOT, 'docs', 'ai-overview.md')).read().strip()
 os.makedirs(OUT, exist_ok=True)
 
 css, body = gen.page_a()
@@ -23,7 +30,8 @@ hero = f"""<section class="hs" style="padding: 24px 0 88px">
 <p class="hs-sub">One floating window gives each Claude Code chat a live stand-up: what it just did, what it’s doing, what’s next, and what’s waiting on you.</p>
 <div style="display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap">
 <a href="{GH}" style="display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 12px; background: #F2F2F3; color: #0B0B0C; font: 650 15px {SANS}; text-decoration: none">{ICON['github']}Get it on GitHub</a>
-<a href="#install" style="display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 18px; border-radius: 12px; border: 1px solid #34353A; color: #F2F2F3; font: 600 15px {SANS}; text-decoration: none">Install in two commands ↓</a>
+<button class="ai-copy" aria-label="Copy an overview for your AI" style="display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 18px; border-radius: 12px; border: 1px solid #34353A; background: transparent; color: #F2F2F3; font: 600 15px {SANS}">{ICON['copy']}<span class="ai-t">Copy for AI</span></button>
+<a href="#install" style="display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 18px; border-radius: 12px; color: #B4B5B9; font: 600 15px {SANS}; text-decoration: none">Install in two commands ↓</a>
 </div>
 </div>
 <div class="hs-stage" role="img" aria-label="Four Claude Code chats at work on the left, each feeding its card on the Session Board on the right: summary lines rewriting as the work moves, a side task, cards moving as their state changes, a popup when one needs you, and the highlight following the chat you open">
@@ -33,6 +41,13 @@ hero = f"""<section class="hs" style="padding: 24px 0 88px">
 </div>
 </section>"""
 body = body[:h0] + hero + body[h1:]
+
+# Install: let Claude do it. Footer: where bugs and ideas go.
+i0 = body.index('<p style="margin: 0; font: 15px/1.55')
+body = body[:i0] + f'''<div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font: 15px/1.5 {SANS}; color: #A6A7AC"><span>Or let Claude do it: paste this into any chat.</span><button class="ai-copy" aria-label="Copy an overview for your AI" style="display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: #26272B; color: #F2F2F3; font: 600 13px {SANS}">{ICON['copy']}<span class="ai-t">Copy for AI</span></button></div>
+''' + body[i0:]
+body = body.replace('<span>Made for Claude Code. Not an Anthropic product.</span>',
+    f'<span>Bug or idea? Tell Claude and say <b style="color: #DADADF; font-weight: 600">report</b>, or <a href="{GH}/issues" style="color: #B4B5B9">open an issue</a>.</span><span>Made for Claude Code. Not an Anthropic product.</span>', 1)
 video = ''
 
 css += '''
@@ -105,8 +120,20 @@ for (const b of document.querySelectorAll('button[aria-label^="Copy: "]')) {
     } catch (e) {}
   });
 }
+// Copy for AI: the overview in #ai-text, for pasting into Claude or any AI
+const aiText = document.getElementById('ai-text').textContent.trim();
+for (const b of document.querySelectorAll('.ai-copy')) {
+  b.addEventListener('click', async () => {
+    const label = b.querySelector('.ai-t');
+    try {
+      await navigator.clipboard.writeText(aiText);
+      if (label) label.textContent = 'Copied. Paste it into Claude';
+      setTimeout(() => { if (label) label.textContent = 'Copy for AI'; }, 2400);
+    } catch (e) {}
+  });
+}
 </script>
-<script src="hero.js"></script>'''
+<script src="hero.js"></script>''' 
 
 TITLE = 'Session Board · every Claude Code session at a glance'
 DESC = 'A floating Mac window that gives each Claude Code session a live one-line stand-up: what it just did, what it is doing, what is next, and what is waiting on you. Free and open source.'
@@ -133,7 +160,19 @@ html{{background:#0B0B0C}}</style>
 </head>
 <body>'''
 
-open(os.path.join(OUT, 'index.html'), 'w').write(head + body + script + '\n</body>\n</html>\n')
-HERE = os.path.dirname(os.path.abspath(__file__))
-open(os.path.join(OUT, 'hero.js'), 'w').write(open(os.path.join(HERE, 'film', 'shared.js')).read() + '\n' + open(os.path.join(HERE, 'hero-page.js')).read())
+# A script element's text is read raw (not decoded as HTML), so only a closing tag could break it
+assert '</script' not in AI_TEXT.lower()
+ai_block = f'<script type="text/plain" id="ai-text">{AI_TEXT}</script>'
+open(os.path.join(OUT, 'index.html'), 'w').write(head + body + ai_block + script + '\n</body>\n</html>\n')
+open(os.path.join(OUT, 'hero.js'), 'w').write(open(os.path.join(HERE, 'board-engine.js')).read() + '\n' + open(os.path.join(HERE, 'hero-page.js')).read())
+open(os.path.join(OUT, 'llms.txt'), 'w').write(AI_TEXT + '\n')
+
+# The README's copy, between its markers, as a code block (GitHub gives those a copy button)
+readme_path = os.path.join(ROOT, 'README.md')
+readme = open(readme_path).read()
+a, b = '<!-- ai-overview -->', '<!-- /ai-overview -->'
+if a in readme and b in readme:
+    block = a + '\n\n````text\n' + AI_TEXT + '\n````\n\n' + b
+    readme = readme[:readme.index(a)] + block + readme[readme.index(b) + len(b):]
+    open(readme_path, 'w').write(readme)
 print('wrote', os.path.join(OUT, 'index.html'))

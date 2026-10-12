@@ -319,13 +319,16 @@ test('while another session builds the app, this one leaves it to that one', asy
   expect(toasts).toEqual([])
 })
 
-test('a failed build says why under the prompt', async ($, on) => {
+test('a failed build says why under the prompt, and keeps the error for a report', async ($, on) => {
   const runs: string[][] = []
   const toasts: string[] = []
-  stubEngine(on, { runs, toasts, app: 'missing', build: { exitCode: 1, stderr: 'main.swift:12: error: cannot find type\nmore' } })
+  const writes: string[][] = []
+  stubEngine(on, { runs, toasts, writes, app: 'missing', build: { exitCode: 1, stderr: 'main.swift:12: error: cannot find type\nmore' } })
   await start($)
-  await waitFor(() => toasts.length > 0)
-  expect(toasts).toEqual(['Session Board: main.swift:12: error: cannot find type'])
+  await waitFor(() => toasts.length > 0 && writes.some(([p]) => p.endsWith('/last-error.json')))
+  expect(toasts).toEqual(['Session Board: main.swift:12: error: cannot find type · Tell Claude "report the Session Board error" to send it to us'])
+  const [, text] = writes.find(([p]) => p === DATA + '/last-error.json')!
+  expect(JSON.parse(text)).toMatchObject({ kind: 'build', message: expect.stringContaining('cannot find type') })
   expect(opens(runs)).toEqual([])
 })
 

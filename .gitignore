@@ -10,3 +10,4 @@ docs/launch/out/
 docs/design/BRAND-SPEC.md
 docs/design/landing/BRAND-SPEC.md
 node_modules/
+__pycache__/

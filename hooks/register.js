@@ -13,6 +13,7 @@
 //   removed.json   bullets removed in the window, by session id, which summaries leave out
 //   show-request   written by /session-board, so the window shows even if it was hidden
 //   built.sha      what the installed app was built from (written by board/build.sh)
+//   last-error.json  the last failed build, for the feedback skill's reports
 
 const PREFIX = 's:'
 // A record whose session left the registry this long ago is deleted
@@ -941,11 +942,16 @@ async function openBoard($) {
   await $.process.run(['open', '-g', app], { timeoutMs: 10000 })
 }
 
-// A build that failed says why under the prompt (in the terminal; Desktop draws no mod notices)
+// A build that failed says why under the prompt (in the terminal; Desktop draws no mod notices),
+// and is kept in last-error.json, which the feedback skill sends when the user asks to report it
 function reportFailure($, err) {
   if (err?.message === 'building') return
+  const message = String(err?.message ?? err).slice(0, 2000)
+  void (async () => {
+    await $.fs.write((await dataDir($)) + '/last-error.json', JSON.stringify({ kind: 'build', at: await $.clock.now(), message }))
+  })().catch(() => {})
   try {
-    $.ui.toast('Session Board: ' + oneLine(err?.message ?? err, 160), { timeoutMs: 12000 })
+    $.ui.toast('Session Board: ' + oneLine(message, 140) + ' · Tell Claude "report the Session Board error" to send it to us', { timeoutMs: 15000 })
   } catch {
     // No surface to show it on
   }
