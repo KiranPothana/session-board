@@ -104,6 +104,9 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
       agentsRunning: rec?.agentsRunning ?? 0,
       // The descriptions Claude gave the commands it still runs, by command key (from the mod)
       runningLabels: rec?.runningLabels ?? {},
+      // Names Claude Desktop may still show for it after a rename: its former names (the
+      // registry's) and its name without the project in front. Desktop keeps the name it first had.
+      otherNames: otherNames(name, project, (Array.isArray(reg.formerNames) ? reg.formerNames : []).map((f) => f?.name)),
       workflowsRunning: rec?.workflowsRunning ?? 0,
       startedAt: reg.startedAt ?? 0,
     })
@@ -353,6 +356,15 @@ export function sameName(a, b) {
   return plain(a) === plain(b)
 }
 
+// A session's other names (row.otherNames): its former names, and its name without the project the
+// rename put in front ("OTC · Fix the login" is also "Fix the login")
+export function otherNames(name, project, former) {
+  const names = former.filter((n) => typeof n === 'string')
+  const lead = project + ' · '
+  if (project && name.startsWith(lead)) names.push(name.slice(lead.length))
+  return names.filter((n) => n && !sameName(n, name))
+}
+
 // From what the window side says is in front, the session you're looking at: the one Claude Desktop
 // shows (by name; of two the same, the one active most recently), or the one under the terminal in
 // front (by pid; of several, the one the window title names). `undefined` keeps the current one.
@@ -360,7 +372,10 @@ export function focusedFrom(front, rows, current) {
   if (!front) return undefined
   if ('desktopName' in front) {
     if (front.desktopName == null) return undefined
-    const hits = rows.filter((r) => sameName(r.name, front.desktopName)).sort((a, b) => a.since - b.since)
+    // Its current name first; failing that, a name it had before a rename, which Desktop goes on showing
+    const byName = (match) => rows.filter(match).sort((a, b) => a.since - b.since)
+    const hits = byName((r) => sameName(r.name, front.desktopName))
+    if (!hits.length) hits.push(...byName((r) => (r.otherNames ?? []).some((n) => sameName(n, front.desktopName))))
     // The chat open in Desktop isn't on the board: highlight nothing rather than the wrong one
     return hits[0]?.id ?? null
   }

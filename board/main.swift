@@ -71,8 +71,21 @@ struct Row: Identifiable {
     var bridgeId: String = ""
     // The descriptions Claude gave the commands it still runs, by command key (from the mod)
     var runningLabels: [String: String] = [:]
+    // Names Claude Desktop may still show for it after a rename: the ones it had before (the
+    // registry's formerNames) and the name without its project in front. Desktop keeps the name it
+    // first had, so these let the highlight find a session renamed since.
+    var otherNames: [String] = []
 
     var isQuiet: Bool { status == "idle" && since > quietSeconds }
+}
+
+// A session's other names (Row.otherNames): its former names, and its name without the project
+// the rename put in front ("OTC · Fix the login" is also "Fix the login")
+func otherNames(name: String, project: String, former: [String]) -> [String] {
+    var names = former
+    let lead = project + " · "
+    if !project.isEmpty, name.hasPrefix(lead) { names.append(String(name.dropFirst(lead.count))) }
+    return names.filter { !$0.isEmpty && !sameName($0, name) }
 }
 
 func ago(_ seconds: Double) -> String {
@@ -745,7 +758,9 @@ func loadRows(now: Double) -> [Row] {
             // The folder the session was opened in (the registry's), not one it moved into since
             project: projectName((reg?["cwd"] as? String) ?? cwd),
             bridgeId: (reg?["bridgeSessionId"] as? String) ?? "",
-            runningLabels: (rec?["runningLabels"] as? [String: String]) ?? [:]
+            runningLabels: (rec?["runningLabels"] as? [String: String]) ?? [:],
+            otherNames: otherNames(name: regName.isEmpty ? baseName(cwd) : regName, project: projectName((reg?["cwd"] as? String) ?? cwd),
+                                   former: ((reg?["formerNames"] as? [Any]) ?? []).compactMap { ($0 as? [String: Any])?["name"] as? String })
         )
     }
     .sorted { (rank[$0.status] ?? 3, $0.since) < (rank[$1.status] ?? 3, $1.since) }
@@ -1135,13 +1150,18 @@ final class Board: ObservableObject {
         if trusted != canReadDesktop { canReadDesktop = trusted }
         if focusCheckRunning { return }
         if front == desktopBundle {
-            let candidates = rows.map { ($0.id, $0.name, $0.since) }
+            let candidates = rows.map { ($0.id, $0.name, $0.otherNames, $0.since) }
             focusCheckRunning = true
             focusQueue.async { [weak self] in
                 let name = desktopOpenSessionName()
                 // Same name twice: the one active most recently. Names compare without caring about
                 // curly or straight quotes, case or spacing.
-                let id = name.flatMap { n in candidates.filter { sameName($0.1, n) }.min { $0.2 < $1.2 }?.0 }
+                // A session's current name first; failing that, a name it had before a rename, which
+                // Desktop goes on showing
+                let id = name.flatMap { n in
+                    (candidates.filter { sameName($0.1, n) }.min { $0.3 < $1.3 }
+                        ?? candidates.filter { $0.2.contains { sameName($0, n) } }.min { $0.3 < $1.3 })?.0
+                }
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.focusCheckRunning = false

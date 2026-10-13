@@ -183,7 +183,7 @@ test('one sound at a time: the most urgent, at most every 8 s, only switched-on 
   assert.equal(soundFor([{ kind: DONE }]), null)
 })
 
-import { focusedFrom, sameName, parseCrash } from './model.js'
+import { focusedFrom, sameName, parseCrash, otherNames } from './model.js'
 
 test('the session you are looking at', () => {
   const rows = [{ id: 'a', name: 'Fix login', pid: 10, since: 50 }, { id: 'b', name: 'Fix login', pid: 11, since: 5 }, { id: 'c', name: 'Docs', pid: 12, since: 9 }]
@@ -212,4 +212,19 @@ test('crash reports: the exception and the crashed thread, from an .ips or a pan
   const p = parseCrash('panic', "panicked at src/main.rs:5:1:\nboom\n\nSession Board 0.2.0", { at: 0 })
   assert.equal(p.title, 'Window app crashed: src/main.rs:5:1:')
   assert.equal(parseCrash('ips', 'not json'), null)
+})
+
+test('a session renamed since Claude Desktop named it is still found by the name Desktop shows', () => {
+  const rows = [
+    { id: 'old', name: 'OTC · Fix login', otherNames: otherNames('OTC · Fix login', 'OTC', ['Fix login']), since: 5 },
+    { id: 'web', name: 'web · Ship the site', otherNames: otherNames('web · Ship the site', 'web', []), since: 9 },
+    { id: 'same', name: 'Fix login', otherNames: [], since: 50 },
+  ]
+  // A session whose current name matches wins over another's former name
+  assert.equal(focusedFrom({ desktopName: 'Fix login' }, rows, null), 'same')
+  assert.equal(focusedFrom({ desktopName: 'Fix login' }, rows.slice(0, 2), null), 'old')
+  // The name without the project in front
+  assert.equal(focusedFrom({ desktopName: 'Ship the site' }, rows, null), 'web')
+  assert.deepEqual(otherNames('web · Ship it', 'web', [null, 'web · Ship it', 'Draft']), ['Draft', 'Ship it'])
+  assert.deepEqual(otherNames('Plain name', 'web', []), [])
 })
