@@ -116,12 +116,15 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
   return rows
 }
 
-export const isQuiet = (row) => row.status === 'idle' && row.since > QUIET_SECONDS
+// Quiet: idle and left alone for 12 hours, off the board. The session you're viewing never is, and
+// opening one (openedAt, epoch seconds) brings it back for another 12 hours
+export const isQuiet = (row, { focusedId = null, openedAt = {}, now = Date.now() } = {}) =>
+  row.status === 'idle' && row.since > QUIET_SECONDS && row.id !== focusedId && now / 1000 - (openedAt[row.id] ?? 0) >= QUIET_SECONDS
 
 // What the board shows, what's in Dismissed, and the counts (over what it shows)
-export function partition(rows, dismissed = []) {
+export function partition(rows, dismissed = [], seen = {}) {
   const gone = new Set(dismissed)
-  const shown = rows.filter((r) => !isQuiet(r) && !gone.has(r.id))
+  const shown = rows.filter((r) => !isQuiet(r, seen) && !gone.has(r.id))
   const hidden = rows.filter((r) => gone.has(r.id))
   const count = (s) => shown.filter((r) => r.status === s).length
   return { shown, hidden, needsYou: count('needs-you'), working: count('working'), idle: count('idle') }

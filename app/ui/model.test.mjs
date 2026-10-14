@@ -65,6 +65,14 @@ test('quiet after 12 idle hours; dismissed ones go to Dismissed even when quiet;
   assert.deepEqual([p.needsYou, p.working, p.idle], [0, 1, 0])
 })
 
+test('a quiet session shows while you view it and for 12 hours after you open it', () => {
+  const rows = buildRows({ now: NOW, registry: reg('a', { statusUpdatedAt: NOW - 13 * 3_600_000 }) })
+  assert.deepEqual(partition(rows, [], { now: NOW }).shown, [])
+  assert.deepEqual(partition(rows, [], { focusedId: 'a', now: NOW }).shown.map((r) => r.id), ['a'])
+  assert.deepEqual(partition(rows, [], { openedAt: { a: NOW / 1000 - 3600 }, now: NOW }).shown.map((r) => r.id), ['a'])
+  assert.deepEqual(partition(rows, [], { openedAt: { a: NOW / 1000 - 13 * 3600 }, now: NOW }).shown, [])
+})
+
 test('a dismissed session comes back when it needs you after you dismissed it', () => {
   const rows = buildRows({ now: NOW, registry: reg('a', { status: 'waiting', statusUpdatedAt: NOW - 30_000 }) })
   // dismissedAt is when you dismissed it (epoch seconds). Dismissed 60 s ago, needs you since 30 s ago: back

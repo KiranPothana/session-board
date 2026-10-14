@@ -26,7 +26,7 @@ let storeDir = home + "/.claude/plugins/store"
 var storePrefix = "session-board_"
 // Settings, removed bullets, show requests and the highlight's status, shared with the mod
 let appDir = home + "/Library/Application Support/session-board"
-// An idle session older than this is listed on one dim line
+// An idle session left alone this long is quiet: off the board until it's busy or opened again
 let quietSeconds: Double = 12 * 3600
 // A record whose session left the registry is ignored after this, when the registry can't be read
 let staleSeconds: Double = 10 * 60
@@ -76,6 +76,7 @@ struct Row: Identifiable {
     // first had, so these let the highlight find a session renamed since.
     var otherNames: [String] = []
 
+    // Idle with no change for 12 hours; Board.isQuiet also counts opening it
     var isQuiet: Bool { status == "idle" && since > quietSeconds }
 }
 
@@ -866,7 +867,7 @@ final class Board: ObservableObject {
     func considerSounds(_ rows: [Row]) {
         let now = Date().timeIntervalSince1970
         var moments: [(kind: Int, row: Row)] = []
-        for r in rows where !r.isQuiet {
+        for r in rows where !isQuiet(r) {
             let seen = lastSeen[r.id]
             lastSeen[r.id] = (r.status, seen?.status == r.status ? (seen?.count ?? 0) + 1 : 1)
             guard (lastSeen[r.id]?.count ?? 0) >= 2 else { continue }
@@ -1045,7 +1046,23 @@ final class Board: ObservableObject {
     }
 
     // The session in the front Terminal or iTerm tab, or open in Desktop, highlighted in the list
-    @Published var focusedId: String? { didSet { writeStatus() } }
+    @Published var focusedId: String? {
+        didSet {
+            writeStatus()
+            // Opening a session counts as using it, and so does leaving it
+            let now = Date().timeIntervalSince1970
+            for id in [oldValue, focusedId].compactMap({ $0 }) { openedAt[id] = now }
+        }
+    }
+    // When each session was last the one you were viewing, in seconds
+    var openedAt: [String: Double] = (UserDefaults.standard.dictionary(forKey: "openedAt") as? [String: Double]) ?? [:] {
+        didSet { if !drawingSnapshot { UserDefaults.standard.set(openedAt, forKey: "openedAt") } }
+    }
+    // Quiet: idle and left alone for 12 hours. The session you're viewing never is, and opening one
+    // brings it back for another 12 hours
+    func isQuiet(_ row: Row) -> Bool {
+        row.isQuiet && row.id != focusedId && Date().timeIntervalSince1970 - (openedAt[row.id] ?? 0) >= quietSeconds
+    }
     // Accessibility on: needed to read which session Desktop has open
     @Published var canReadDesktop = AXIsProcessTrusted()
     var lastDesktopName: String?
@@ -1108,6 +1125,7 @@ final class Board: ObservableObject {
             if !Set(removedItems.keys).isSubset(of: ids) { removedItems = removedItems.filter { ids.contains($0.key) } }
             if !Set(sessionColors.keys).isSubset(of: ids) { sessionColors = sessionColors.filter { ids.contains($0.key) } }
             if !Set(autoColors.keys).isSubset(of: ids) { autoColors = autoColors.filter { ids.contains($0.key) } }
+            if !Set(openedAt.keys).isSubset(of: ids) { openedAt = openedAt.filter { ids.contains($0.key) } }
         }
     }
 
@@ -1135,8 +1153,8 @@ final class Board: ObservableObject {
         return out
     }
 
-    // Shown: active in the last 12 hours, not dismissed
-    var shown: [Row] { rows.filter { !$0.isQuiet && !dismissed.contains($0.id) } }
+    // Shown: not quiet, not dismissed
+    var shown: [Row] { rows.filter { !isQuiet($0) && !dismissed.contains($0.id) } }
     var hidden: [Row] { rows.filter { dismissed.contains($0.id) } }
     var working: Int { shown.filter { $0.status == "working" }.count }
     var needsYou: Int { shown.filter { $0.status == "needs-you" }.count }
