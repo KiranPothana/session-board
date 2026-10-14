@@ -26,7 +26,7 @@ let storeDir = home + "/.claude/plugins/store"
 var storePrefix = "session-board_"
 // Settings, removed bullets, show requests and the highlight's status, shared with the mod
 let appDir = home + "/Library/Application Support/session-board"
-// An idle session left alone this long is quiet: off the board until it's busy or opened again
+// An idle session left alone this long is quiet: off the board unless it's the one you're viewing
 let quietSeconds: Double = 12 * 3600
 // A record whose session left the registry is ignored after this, when the registry can't be read
 let staleSeconds: Double = 10 * 60
@@ -76,7 +76,7 @@ struct Row: Identifiable {
     // first had, so these let the highlight find a session renamed since.
     var otherNames: [String] = []
 
-    // Idle with no change for 12 hours; Board.isQuiet also counts opening it
+    // Idle for 12 hours; Board.isQuiet keeps the session you're viewing
     var isQuiet: Bool { status == "idle" && since > quietSeconds }
 }
 
@@ -701,9 +701,12 @@ func loadRows(now: Double) -> [Row] {
         // When it entered its status: the mod's statusSince (a tool call is no change), or the
         // registry's statusUpdatedAt for a session without the mod. Orders each status group,
         // newest first, and is the time shown on the row.
-        let changedMs = (own ? number(rec?["statusSince"]) ?? number(rec?["updatedAt"])
+        var changedMs: Double = (own ? number(rec?["statusSince"]) ?? number(rec?["updatedAt"])
                              : number(reg?["statusUpdatedAt"]) ?? number(reg?["updatedAt"]))
             ?? number(rec?["updatedAt"]) ?? 0
+        // Idle since its last message, at the latest: reopening an old chat in Claude Desktop starts
+        // a new process, and that alone isn't activity
+        if status == "idle", let last = number(rec?["lastMessageAt"]), last > 0 { changedMs = changedMs > 0 ? min(changedMs, last) : last }
         let cwd = (rec?["cwd"] as? String) ?? (reg?["cwd"] as? String)
         // A session the registry only knows by a placeholder ("site-54", derived from the folder)
         // shows the title Claude gave the conversation, the one Claude Desktop shows
@@ -1049,20 +1052,10 @@ final class Board: ObservableObject {
     @Published var focusedId: String? {
         didSet {
             writeStatus()
-            // Opening a session counts as using it, and so does leaving it
-            let now = Date().timeIntervalSince1970
-            for id in [oldValue, focusedId].compactMap({ $0 }) { openedAt[id] = now }
         }
     }
-    // When each session was last the one you were viewing, in seconds
-    var openedAt: [String: Double] = (UserDefaults.standard.dictionary(forKey: "openedAt") as? [String: Double]) ?? [:] {
-        didSet { if !drawingSnapshot { UserDefaults.standard.set(openedAt, forKey: "openedAt") } }
-    }
-    // Quiet: idle and left alone for 12 hours. The session you're viewing never is, and opening one
-    // brings it back for another 12 hours
-    func isQuiet(_ row: Row) -> Bool {
-        row.isQuiet && row.id != focusedId && Date().timeIntervalSince1970 - (openedAt[row.id] ?? 0) >= quietSeconds
-    }
+    // Quiet: idle for 12 hours, and not the session you're viewing
+    func isQuiet(_ row: Row) -> Bool { row.isQuiet && row.id != focusedId }
     // Accessibility on: needed to read which session Desktop has open
     @Published var canReadDesktop = AXIsProcessTrusted()
     var lastDesktopName: String?
@@ -1125,7 +1118,6 @@ final class Board: ObservableObject {
             if !Set(removedItems.keys).isSubset(of: ids) { removedItems = removedItems.filter { ids.contains($0.key) } }
             if !Set(sessionColors.keys).isSubset(of: ids) { sessionColors = sessionColors.filter { ids.contains($0.key) } }
             if !Set(autoColors.keys).isSubset(of: ids) { autoColors = autoColors.filter { ids.contains($0.key) } }
-            if !Set(openedAt.keys).isSubset(of: ids) { openedAt = openedAt.filter { ids.contains($0.key) } }
         }
     }
 

@@ -220,6 +220,8 @@ async function publish($) {
   // time since. A tool call is no change, so rows don't reshuffle while a session works.
   if (me.status !== publishedStatus || !me.statusSince) {
     me.statusSince = now
+    // A change after the first publish is activity; the first one is only the process starting
+    if (publishedStatus !== null) me.lastMessageAt = now
     publishedStatus = me.status
   }
   await $.store.set(PREFIX + me.id, me)
@@ -796,12 +798,15 @@ function exchangesFromTranscript(tail) {
   const asked = new Map()
   // The commands it ran, by key, with the description it gave each
   const commands = {}
+  // When the last request or reply was written (ms)
+  let lastAt = 0
   const startExchange = (ask, midTurn = false) => {
     // The same request recorded twice (queued, then delivered) is one exchange
     if (ask && out[out.length - 1]?.ask !== ask) out.push({ ask, parts: [], lastTool: null, midTurn })
   }
   for (const d of entries) {
     if (d.isSidechain) continue
+    if ((d.type === 'user' || d.type === 'assistant') && !d.isMeta) lastAt = Date.parse(d.timestamp) || lastAt
     if (d.type === 'ai-title' && typeof d.aiTitle === 'string' && d.aiTitle.trim()) title = d.aiTitle.trim()
     if (d.type === 'custom-title' && typeof d.customTitle === 'string' && d.customTitle.trim()) customTitle = d.customTitle.trim()
     const c = d.message?.content
@@ -860,7 +865,7 @@ function exchangesFromTranscript(tail) {
   const last = out[out.length - 1]
   const step = last?.lastTool ? stepOf({ tool: last.lastTool.name, ...(last.lastTool.input ?? {}) }) : ''
   return { exchanges: asExchanges(out), step, count: out.length, ended, agents: [...running.values()].filter((r) => r.kind === 'agent').length,
-    workflows: [...running.values()].filter((r) => r.kind === 'workflow').length, pendingTool, title: customTitle || title, commands }
+    workflows: [...running.values()].filter((r) => r.kind === 'workflow').length, pendingTool, title: customTitle || title, commands, lastAt }
 }
 
 // A saved conversation's last exchanges, reading back until it has `want` requests (or the
@@ -903,6 +908,12 @@ async function checkOwnJobs($) {
   const missed = own.ended && latest !== '' && latest !== me.summaryReply && latest !== healedReply
   // What the last idle check saw, kept on the record, for when a board falls behind
   me.idleCheck = { at: await $.clock.now(), ended: !!own.ended, missed }
+  // When the conversation last had a message, for a session that hasn't changed status since it
+  // started: reopening an old chat in Claude Desktop starts a new process, and that alone isn't activity
+  if (!me.lastMessageAt && own.lastAt) {
+    me.lastMessageAt = own.lastAt
+    await publish($)
+  }
   if (missed) {
     healedReply = latest
     return summarize($)
@@ -1010,7 +1021,7 @@ async function catchUp($) {
     if (seenTranscripts.get(id) === mark && !jobsChanged && !statusMoved) continue
     seenTranscripts.set(id, mark)
     // The latest request and step need only the end; a summary reads further back
-    const { exchanges: recent, step, ended, agents, workflows, pendingTool, title, commands } = await readExchanges($, path, 1)
+    const { exchanges: recent, step, ended, agents, workflows, pendingTool, title, commands, lastAt } = await readExchanges($, path, 1)
     // Its running commands by the descriptions it gave them
     const described = describeJobs(running, commands)
     sessionJobs = described.map((j) => j.label)
@@ -1019,7 +1030,7 @@ async function catchUp($) {
     // the turn has ended while a command or a background agent it started still runs: the
     // conversation's end of turn decides. "waiting" is waiting on the user.
     const busy = !ended && (reg.status === 'busy' || reg.status === 'shell')
-    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, runningLabels: describedOnly(running, commands), step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, title: title || rec?.title || '', ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
+    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, runningLabels: describedOnly(running, commands), step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, title: title || rec?.title || '', lastMessageAt: lastAt || rec?.lastMessageAt, ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
     // Background agents count as jobs too, for the summary and for noticing when they finish
     sessionJobs.push(...backgroundLabels(agents, workflows))
     if (latest) next.request = oneLine(latest.ask, 140)

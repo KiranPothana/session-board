@@ -65,12 +65,24 @@ test('quiet after 12 idle hours; dismissed ones go to Dismissed even when quiet;
   assert.deepEqual([p.needsYou, p.working, p.idle], [0, 1, 0])
 })
 
-test('a quiet session shows while you view it and for 12 hours after you open it', () => {
+test('a quiet session shows only while you view it', () => {
   const rows = buildRows({ now: NOW, registry: reg('a', { statusUpdatedAt: NOW - 13 * 3_600_000 }) })
-  assert.deepEqual(partition(rows, [], { now: NOW }).shown, [])
-  assert.deepEqual(partition(rows, [], { focusedId: 'a', now: NOW }).shown.map((r) => r.id), ['a'])
-  assert.deepEqual(partition(rows, [], { openedAt: { a: NOW / 1000 - 3600 }, now: NOW }).shown.map((r) => r.id), ['a'])
-  assert.deepEqual(partition(rows, [], { openedAt: { a: NOW / 1000 - 13 * 3600 }, now: NOW }).shown, [])
+  assert.deepEqual(partition(rows).shown, [])
+  assert.deepEqual(partition(rows, [], { focusedId: 'a' }).shown.map((r) => r.id), ['a'])
+  assert.deepEqual(partition(rows, [], { focusedId: 'b' }).shown, [])
+})
+
+test('an idle session is idle since its last message, not since its process started', () => {
+  const days = 39 * 86_400_000
+  // Reopened a minute ago, last message 39 days ago: quiet, and 39 days on the card
+  const own = buildRows({ now: NOW, registry: reg('a'), store: store({ id: 'a', status: 'idle', statusSince: NOW - 60_000, lastMessageAt: NOW - days }) })[0]
+  assert.equal(Math.round(own.since / 86_400), 39)
+  assert.deepEqual(partition([own]).shown, [])
+  const shadow = buildRows({ now: NOW, registry: reg('a'), store: store({ id: 'a', shadow: true, lastMessageAt: NOW - days }) })[0]
+  assert.equal(Math.round(shadow.since / 86_400), 39)
+  // Working: the last message doesn't matter
+  const busy = buildRows({ now: NOW, registry: reg('a', { status: 'busy' }), store: store({ id: 'a', shadow: true, lastMessageAt: NOW - days }) })[0]
+  assert.equal(busy.since, 60)
 })
 
 test('a dismissed session comes back when it needs you after you dismissed it', () => {

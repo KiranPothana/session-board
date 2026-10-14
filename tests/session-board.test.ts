@@ -858,6 +858,23 @@ test('a turn that ended while its command still runs counts as done, not still w
   expect((saved.get('s:sess-other') as any).turnEnded).toBe(true)
 })
 
+test("a session's last message time is saved, not the time its process started", async ($, on) => {
+  // An old chat reopened in Claude Desktop: a new process, and only bookkeeping written since
+  const at = (o: object, ts: string) => line({ ...o, timestamp: ts })
+  const tail = ['cut',
+    at({ type: 'user', message: { role: 'user', content: 'reconcile the book gap' } }, '2026-09-05T17:59:00.000Z'),
+    at({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }] } }, '2026-09-05T18:00:59.766Z'),
+    line({ type: 'artifact-comment-monitor', sessionId: 'sess-other' })].join('\n')
+  const { saved, clock } = stubEngine(on, { tail })
+  await start($)
+  const sent = Date.parse('2026-09-05T18:00:59.766Z')
+  await clock.advance(30_000)
+  // This session's own record, and the catch-up record of the other one
+  await waitFor(() => (saved.get('s:' + ME) as any)?.lastMessageAt === sent && (saved.get('s:sess-other') as any)?.lastMessageAt === sent)
+  expect((saved.get('s:' + ME) as any).lastMessageAt).toBe(sent)
+  expect((saved.get('s:sess-other') as any).lastMessageAt).toBe(sent)
+})
+
 test('a turn that ended counts as ended even while a background agent keeps the registry busy', async ($, on) => {
   const prompts: string[] = []
   const registry = { ...REGISTRY, '202.json': { pid: 202, sessionId: 'sess-other', cwd: '/work/site', name: 'Site Fixes', status: 'busy', updatedAt: 0 } }

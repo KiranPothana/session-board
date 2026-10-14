@@ -54,7 +54,10 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
     const turnEnded = rec?.turnEnded === true && (reg.statusUpdatedAt ?? 0) <= (rec.updatedAt ?? 0)
     const mapped = regRaw === 'waiting' ? 'needs-you' : regRaw === 'idle' || turnEnded ? 'idle' : 'working'
     const status = own ? (rec.status ?? mapped) : mapped
-    const changedMs = (own ? (rec.statusSince ?? rec.updatedAt) : (reg.statusUpdatedAt ?? reg.updatedAt)) ?? rec?.updatedAt ?? 0
+    let changedMs = (own ? (rec.statusSince ?? rec.updatedAt) : (reg.statusUpdatedAt ?? reg.updatedAt)) ?? rec?.updatedAt ?? 0
+    // Idle since its last message, at the latest: reopening an old chat in Claude Desktop starts a
+    // new process, and that alone isn't activity
+    if (status === 'idle' && rec?.lastMessageAt > 0) changedMs = changedMs ? Math.min(changedMs, rec.lastMessageAt) : rec.lastMessageAt
     const since = changedMs ? Math.max(0, (now - changedMs) / 1000) : 0
     const cwd = rec?.cwd ?? reg.cwd ?? ''
     const project = projects[reg.cwd ?? cwd] ?? baseName(reg.cwd ?? cwd)
@@ -116,10 +119,8 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
   return rows
 }
 
-// Quiet: idle and left alone for 12 hours, off the board. The session you're viewing never is, and
-// opening one (openedAt, epoch seconds) brings it back for another 12 hours
-export const isQuiet = (row, { focusedId = null, openedAt = {}, now = Date.now() } = {}) =>
-  row.status === 'idle' && row.since > QUIET_SECONDS && row.id !== focusedId && now / 1000 - (openedAt[row.id] ?? 0) >= QUIET_SECONDS
+// Quiet: idle for 12 hours, and not the session you're viewing: off the board
+export const isQuiet = (row, { focusedId = null } = {}) => row.status === 'idle' && row.since > QUIET_SECONDS && row.id !== focusedId
 
 // What the board shows, what's in Dismissed, and the counts (over what it shows)
 export function partition(rows, dismissed = [], seen = {}) {

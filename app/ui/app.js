@@ -34,7 +34,7 @@ const TERMINALS = ['terminal', 'iterm2', 'ghostty', 'warp', 'wezterm', 'wezterm-
 // ---- What the window keeps between launches (the macOS app's UserDefaults)
 const PREFS_KEY = 'session-board-prefs'
 const prefs = Object.assign(
-  { collapsed: false, dismissed: [], dismissedAt: {}, sessionColors: {}, autoColors: {}, theme: null, regularWindow: false, hideWhenAway: true, terminalsCount: true, soundsOn: true, removedItems: {}, handledShowRequest: 0, shortcut: DEFAULT_SHORTCUT, userHidden: false, soundMoments: [true, true, false], soundChoices: DEFAULT_SOUNDS, alertVolume: 0.5, askedAccessibility: false, crashSeenAt: 0, openedAt: {} },
+  { collapsed: false, dismissed: [], dismissedAt: {}, sessionColors: {}, autoColors: {}, theme: null, regularWindow: false, hideWhenAway: true, terminalsCount: true, soundsOn: true, removedItems: {}, handledShowRequest: 0, shortcut: DEFAULT_SHORTCUT, userHidden: false, soundMoments: [true, true, false], soundChoices: DEFAULT_SOUNDS, alertVolume: 0.5, askedAccessibility: false, crashSeenAt: 0 },
   (() => { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) ?? {} } catch { return {} } })(),
 )
 const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)) } catch {} }
@@ -44,8 +44,8 @@ const ui = { settings: false, showDismissed: false, openRemoved: new Set(), dism
 const attention = new Attention()
 let state = { rows: [], shared: { summaries: true, projectNames: true, renameSessions: false }, platform: 'browser' }
 
-// What decides whether a session is quiet: the one you're viewing, and when each was last open
-const seen = () => ({ focusedId: ui.focusedId, openedAt: prefs.openedAt })
+// What decides whether a session is quiet, besides its age: the one you're viewing
+const seen = () => ({ focusedId: ui.focusedId })
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
 const params = new URLSearchParams(location.search)
@@ -63,7 +63,7 @@ async function read() {
   if (rows.length) {
     const ids = new Set(rows.map((r) => r.id))
     prefs.dismissed = prefs.dismissed.filter((id) => ids.has(id))
-    for (const map of [prefs.removedItems, prefs.sessionColors, prefs.autoColors, prefs.openedAt]) for (const id of Object.keys(map)) if (!ids.has(id)) delete map[id]
+    for (const map of [prefs.removedItems, prefs.sessionColors, prefs.autoColors]) for (const id of Object.keys(map)) if (!ids.has(id)) delete map[id]
   }
   prefs.autoColors = assignColors(rows, prefs.sessionColors, prefs.autoColors, tauri ? Math.random : () => 0)
   if (snap.showRequest && snap.showRequest > prefs.handledShowRequest) {
@@ -621,9 +621,6 @@ async function followFocus() {
   const front = await invoke('focus', { pids }).catch(() => null)
   const id = focusedFrom(front, state.rows, ui.focusedId)
   if (id === undefined || id === ui.focusedId) return
-  // Opening a session counts as using it, and so does leaving it
-  for (const x of [ui.focusedId, id]) if (x) prefs.openedAt[x] = Date.now() / 1000
-  savePrefs()
   ui.focusedId = id
   ui.userScrolled = false
   // You're there now: its popup has done its job
