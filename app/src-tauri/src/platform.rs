@@ -215,7 +215,8 @@ pub fn focus(session_pids: &[u32]) -> Value {
         #[cfg(target_os = "macos")]
         return json!({ "desktopName": mac::desktop_session_name(front_pid as i32) });
         #[cfg(not(target_os = "macos"))]
-        return json!({ "desktopName": front.title.strip_suffix(DESKTOP_SUFFIX).map(str::to_string) });
+        // A window titled another way may still be named after its chat: the board matches it
+        return json!({ "desktopName": front.title.strip_suffix(DESKTOP_SUFFIX).map(str::to_string), "desktopPages": [front.title] });
     }
     #[cfg(target_os = "macos")]
     if let Some(pids) = mac::terminal_tab_pids(&front.app_name) {

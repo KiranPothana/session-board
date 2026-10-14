@@ -372,16 +372,25 @@ export function otherNames(name, project, former) {
 // From what the window side says is in front, the session you're looking at: the one Claude Desktop
 // shows (by name; of two the same, the one active most recently), or the one under the terminal in
 // front (by pid; of several, the one the window title names). `undefined` keeps the current one.
-export function focusedFrom(front, rows, current) {
+// misses: reads in a row before this one that found no session open in Desktop
+export function focusedFrom(front, rows, current, misses = 0) {
   if (!front) return undefined
   if ('desktopName' in front) {
-    if (front.desktopName == null) return undefined
     // Its current name first; failing that, a name it had before a rename, which Desktop goes on showing
     const byName = (match) => rows.filter(match).sort((a, b) => a.since - b.since)
-    const hits = byName((r) => sameName(r.name, front.desktopName))
-    if (!hits.length) hits.push(...byName((r) => (r.otherNames ?? []).some((n) => sameName(n, front.desktopName))))
-    // The chat open in Desktop isn't on the board: highlight nothing rather than the wrong one
-    return hits[0]?.id ?? null
+    const find = (name) => {
+      const hits = byName((r) => sameName(r.name, name))
+      if (!hits.length) hits.push(...byName((r) => (r.otherNames ?? []).some((n) => sameName(n, name))))
+      return hits[0]?.id
+    }
+    // The session page's name, or else any title the window shows (a window laid out another way)
+    for (const name of [front.desktopName, ...(front.desktopPages ?? [])]) {
+      const id = name ? find(name) : undefined
+      if (id) return id
+    }
+    // The chat open in Desktop isn't on the board, or can't be read for a second (three reads in a
+    // row): highlight nothing rather than the wrong one
+    return front.desktopName != null || misses >= 3 ? null : undefined
   }
   const hits = rows.filter((r) => r.pid && (front.pids ?? []).includes(r.pid))
   if (hits.length === 1) return hits[0].id

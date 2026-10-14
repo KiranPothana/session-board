@@ -619,7 +619,9 @@ function openSession(row) {
 async function followFocus() {
   const pids = state.rows.map((r) => r.pid).filter(Boolean)
   const front = await invoke('focus', { pids }).catch(() => null)
-  const id = focusedFrom(front, state.rows, ui.focusedId)
+  const id = focusedFrom(front, state.rows, ui.focusedId, ui.desktopMisses ?? 0)
+  // Reads in a row that found no session open in Desktop
+  ui.desktopMisses = front && 'desktopName' in front && !id ? (ui.desktopMisses ?? 0) + 1 : 0
   if (id === undefined || id === ui.focusedId) return
   ui.focusedId = id
   ui.userScrolled = false

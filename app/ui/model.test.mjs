@@ -212,6 +212,11 @@ test('the session you are looking at', () => {
   assert.equal(focusedFrom({ desktopName: 'fix login' }, rows, null), 'b')
   assert.equal(focusedFrom({ desktopName: 'Something else' }, rows, 'c'), null)
   assert.equal(focusedFrom({ desktopName: null }, rows, 'c'), undefined)
+  // No session page found: a window titled after its chat still counts; nothing for a second, then
+  // no highlight rather than the last one, which points at the wrong chat
+  assert.equal(focusedFrom({ desktopName: null, desktopPages: ['Docs'] }, rows, 'a'), 'c')
+  assert.equal(focusedFrom({ desktopName: null, desktopPages: ['Claude'] }, rows, 'c', 2), undefined)
+  assert.equal(focusedFrom({ desktopName: null, desktopPages: ['Claude'] }, rows, 'c', 3), null)
   // Terminal: by pid; of several, the one the window title names; else keep the current one
   assert.equal(focusedFrom({ pids: [12], title: 'zsh' }, rows, null), 'c')
   assert.equal(focusedFrom({ pids: [10, 12], title: '✳ Docs' }, rows, null), 'c')

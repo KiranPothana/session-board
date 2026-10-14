@@ -272,39 +272,47 @@ func sameName(_ a: String, _ b: String) -> Bool {
     return plain(a) == plain(b)
 }
 
-func desktopOpenSessionName() -> String? {
+// The names the front Desktop window gives its chat: the session page's title (it ends in
+// " - Claude Code"), or, when no page is titled that way (a window laid out another way), every
+// titled page in the window, for the caller to match against the sessions it knows
+func desktopOpenSessionNames() -> [String] {
     guard AXIsProcessTrusted(),
           let app = NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).first
-    else { return nil }
+    else { return [] }
     let ax = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetAttributeValue(ax, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     guard let window = (axAttr(ax, kAXFocusedWindowAttribute) as! AXUIElement?)
             ?? (axAttr(ax, kAXWindowsAttribute) as? [AXUIElement])?.first
-    else { return nil }
+    else { return [] }
     let suffix = " - Claude Code"
     // The page found last time, while it's still in the window in front and still names a session
     if let page = cachedSessionPage, let pageWindow = axAttr(page, kAXWindowAttribute), CFEqual(pageWindow, window),
        let title = axAttr(page, kAXTitleAttribute) as? String, title.hasSuffix(suffix) {
-        return String(title.dropLast(suffix.count))
+        return [String(title.dropLast(suffix.count))]
     }
     cachedSessionPage = nil
+    var others: [String] = []
     // The page sits about eight levels down, inside two outer web areas with blank titles;
     // look breadth-first, and not far
     var level = [window]
     for _ in 0..<14 {
         var next: [AXUIElement] = []
         for e in level {
-            if (axAttr(e, kAXRoleAttribute) as? String) == "AXWebArea", let title = axAttr(e, kAXTitleAttribute) as? String,
-               title.hasSuffix(suffix) {
-                cachedSessionPage = e
-                return String(title.dropLast(suffix.count))
+            if (axAttr(e, kAXRoleAttribute) as? String) == "AXWebArea", let title = axAttr(e, kAXTitleAttribute) as? String {
+                if title.hasSuffix(suffix) {
+                    cachedSessionPage = e
+                    return [String(title.dropLast(suffix.count))]
+                }
+                if !title.trimmingCharacters(in: .whitespaces).isEmpty { others.append(title) }
             }
             next += (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []
         }
         if next.isEmpty || next.count > 400 { break }
         level = next
     }
-    return nil
+    // A window of its own may be titled after its chat
+    if let title = axAttr(window, kAXTitleAttribute) as? String, !title.trimmingCharacters(in: .whitespaces).isEmpty { others.append(title) }
+    return others
 }
 
 // The shortcut that shows or hides the window from any app: a key and its modifiers, the way
@@ -1059,6 +1067,10 @@ final class Board: ObservableObject {
     // Accessibility on: needed to read which session Desktop has open
     @Published var canReadDesktop = AXIsProcessTrusted()
     var lastDesktopName: String?
+    // The names Desktop's front window gave its chat, last read
+    var lastDesktopPages: [String] = []
+    // Reads in a row that found no session open in Desktop
+    var desktopMisses = 0
 
     // status.json in the shared folder: what the highlight last saw, for troubleshooting
     func writeStatus() {
@@ -1066,7 +1078,7 @@ final class Board: ObservableObject {
         let status: [String: Any] = [
             "at": Date().timeIntervalSince1970, "accessibility": canReadDesktop,
             "front": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
-            "desktopName": lastDesktopName ?? "", "focusedId": focusedId ?? "",
+            "desktopName": lastDesktopName ?? "", "desktopPages": lastDesktopPages, "focusedId": focusedId ?? "",
             "focusedName": rows.first { $0.id == focusedId }?.name ?? "",
             // Where the popups line up: the list's top, below the top of the board's content
             "listTop": listTop.map { Double($0) } ?? -1,
@@ -1163,27 +1175,31 @@ final class Board: ObservableObject {
             let candidates = rows.map { ($0.id, $0.name, $0.otherNames, $0.since) }
             focusCheckRunning = true
             focusQueue.async { [weak self] in
-                let name = desktopOpenSessionName()
+                let names = desktopOpenSessionNames()
                 // Same name twice: the one active most recently. Names compare without caring about
                 // curly or straight quotes, case or spacing.
                 // A session's current name first; failing that, a name it had before a rename, which
                 // Desktop goes on showing
-                let id = name.flatMap { n in
+                let match = { (n: String) in
                     (candidates.filter { sameName($0.1, n) }.min { $0.3 < $1.3 }
                         ?? candidates.filter { $0.2.contains { sameName($0, n) } }.min { $0.3 < $1.3 })?.0
                 }
+                let found = names.lazy.compactMap { n in match(n).map { (n, $0) } }.first
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.focusCheckRunning = false
-                    let nameChanged = name != self.lastDesktopName
+                    let name = found?.0 ?? names.first
+                    let changed = name != self.lastDesktopName || names != self.lastDesktopPages
                     self.lastDesktopName = name
-                    if let id, self.focusedId != id {
+                    self.lastDesktopPages = names
+                    self.desktopMisses = found == nil ? self.desktopMisses + 1 : 0
+                    if let id = found?.1, self.focusedId != id {
                         self.focusedId = id
-                    } else if id == nil, name != nil, self.focusedId != nil {
-                        // The chat open in Desktop isn't a session on the board: highlight nothing,
-                        // rather than the one open before, which would point at the wrong chat
+                    } else if found == nil, self.desktopMisses >= 4, self.focusedId != nil {
+                        // No session open in Desktop that the board knows, for a second: highlight
+                        // nothing, rather than the one open before, which points at the wrong chat
                         self.focusedId = nil
-                    } else if nameChanged {
+                    } else if changed {
                         self.writeStatus()
                     }
                 }
@@ -3972,6 +3988,33 @@ if let i = args.firstIndex(of: "--check-shortcut"), i + 3 < args.count,
     print(s.display, "→", shortcutProblem(s) ?? (shortcutClashes(s).isEmpty ? "free" : shortcutClashes(s).joined(separator: " | ")))
     exit(0)
 }
+// Prints each Claude Desktop window and the page titles in it, for troubleshooting the highlight
+if args.contains("--desktop-pages") {
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).first else { print("Claude Desktop isn't running"); exit(1) }
+    let ax = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetAttributeValue(ax, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    let focused = axAttr(ax, kAXFocusedWindowAttribute)
+    print("accessibility", AXIsProcessTrusted(), "· open session:", desktopOpenSessionNames())
+    let kids = (axAttr(ax, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    print("windows:", ((axAttr(ax, kAXWindowsAttribute) as? [AXUIElement]) ?? []).count, "· focused:", focused != nil, "· main:", axAttr(ax, kAXMainWindowAttribute) != nil,
+          "· children:", kids.map { axAttr($0, kAXRoleAttribute) as? String ?? "?" })
+    for (i, w) in ((axAttr(ax, kAXWindowsAttribute) as? [AXUIElement]) ?? []).enumerated() {
+        print("window", i, focused.map { CFEqual($0, w) } == true ? "(front)" : "", axAttr(w, kAXTitleAttribute) as? String ?? "")
+        var level = [w]
+        for depth in 0..<20 {
+            var next: [AXUIElement] = []
+            for e in level {
+                if (axAttr(e, kAXRoleAttribute) as? String) == "AXWebArea" { print("  depth", depth, "page:", axAttr(e, kAXTitleAttribute) as? String ?? "(none)") }
+                next += (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+            }
+            if next.isEmpty { break }
+            if next.count > 400 { print("  depth", depth, next.count, "elements") }
+            level = next
+        }
+    }
+    exit(0)
+}
+
 if args.contains("--test-alert") {
     let before = SystemVolume.get()
     print("output volume before:", before.map { String(format: "%.0f%%", $0 * 100) } ?? "no volume control", "| muted:", SystemVolume.muted())
