@@ -372,7 +372,13 @@ func desktopSidebarRows() -> [SidebarRow]? {
     }
     if let s = cachedSidebar, axAttr(s, kAXRoleAttribute) == nil || !isSidebar(s) { cachedSidebar = nil }
     if cachedSidebar == nil {
-        guard let windows = axAttr(ax, kAXWindowsAttribute) as? [AXUIElement], !windows.isEmpty else { return nil }
+        // A full-screen window, or one on another Space, is missing from AXWindows but is still the
+        // focused or main window
+        var windows = (axAttr(ax, kAXWindowsAttribute) as? [AXUIElement]) ?? []
+        for name in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] where windows.isEmpty {
+            if let w = axAttr(ax, name), CFGetTypeID(w) == AXUIElementGetTypeID() { windows = [w as! AXUIElement] }
+        }
+        guard !windows.isEmpty else { return nil }
         var level = windows
         search: for _ in 0..<16 {
             var next: [AXUIElement] = []
