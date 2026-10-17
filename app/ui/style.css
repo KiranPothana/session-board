@@ -80,6 +80,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .line { display: flex; font: 11.5px/1.32 var(--mono); color: var(--soft); position: relative; }
 .line .g { flex: none; width: 14px; }
 .line .t { min-width: 0; overflow-wrap: anywhere; }
+.line.task { color: var(--text); font-weight: 700; }
 .line.ask { color: var(--amber-text); font-weight: 700; }
 .line.side { color: var(--violet); }
 .line.paused, .line.done { color: var(--muted); }
