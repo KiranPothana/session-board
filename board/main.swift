@@ -77,6 +77,8 @@ struct Row: Identifiable {
     var otherNames: [String] = []
     // A cloud session, read from Claude Desktop's sidebar (cloudRows): a name, a project and a status only
     var isCloud = false
+    // The task the session is on, in a line anyone could follow (the summary's), kept across summaries
+    var task = ""
 
     // Idle for 12 hours; Board.isQuiet keeps the session you're viewing
     var isQuiet: Bool { status == "idle" && since > quietSeconds }
@@ -1049,7 +1051,8 @@ func loadRows(now: Double) -> [Row] {
             bridgeId: (reg?["bridgeSessionId"] as? String) ?? "",
             runningLabels: (rec?["runningLabels"] as? [String: String]) ?? [:],
             otherNames: otherNames(name: regName.isEmpty ? baseName(cwd) : regName, project: projectName((reg?["cwd"] as? String) ?? cwd),
-                                   former: ((reg?["formerNames"] as? [Any]) ?? []).compactMap { ($0 as? [String: Any])?["name"] as? String })
+                                   former: ((reg?["formerNames"] as? [Any]) ?? []).compactMap { ($0 as? [String: Any])?["name"] as? String }),
+            task: ((rec?["summary"] as? [String: Any])?["task"] as? String) ?? ""
         )
     }
     .sorted { (rank[$0.status] ?? 3, $0.since) < (rank[$1.status] ?? 3, $1.since) }
@@ -1868,6 +1871,7 @@ func copyToPasteboard(_ text: String) {
 // A session as plain text, for pasting into a chat with Claude
 func sessionText(_ row: Row, removed: [String], jobs: [BackgroundJob] = []) -> String {
     var lines = [row.name + " (" + (row.status == "needs-you" ? "needs you" : row.status) + " " + ago(row.since) + " · " + row.place + ")"]
+    if !row.task.isEmpty { lines.append("◎ task: " + row.task) }
     if !row.ask.isEmpty { lines.append("? " + row.ask) }
     if !row.side.isEmpty { lines.append("↪ side task: " + row.side) }
     if !row.paused.isEmpty { lines.append("⏸ paused: " + row.paused) }
@@ -2110,6 +2114,8 @@ struct SessionCard: View {
             .buttonStyle(.plain).help("Open this session · " + row.place)
             .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
             VStack(alignment: .leading, spacing: 3) {
+                // The task, so anyone reading the card knows what the session is for
+                if !row.task.isEmpty { ListLine(glyph: "◎", text: row.task, color: p.text, bold: true, maxLines: 2) }
                 if !row.ask.isEmpty { ListLine(glyph: "?", text: row.ask, color: p.amberText, bold: true) }
                 if !row.side.isEmpty {
                     ListLine(glyph: "↪", text: row.side, color: p.violet)
@@ -4189,19 +4195,20 @@ var drawingSnapshot = false
 func sampleRows() -> [Row] {
     func row(_ id: String, _ name: String, _ status: String, _ minutes: Double, desktop: Bool = false, justDid: String = "",
              agents: Int = 0, workflows: Int = 0, items: [Item] = [], request: String = "", ask: String = "", side: String = "", paused: String = "",
-             taskList: Bool = false) -> Row {
+             taskList: Bool = false, task: String = "") -> Row {
         Row(id: id, pid: nil, name: name, place: "~/Projects/" + id, status: status, since: minutes * 60, isRemote: !desktop,
             isDesktop: desktop, hasMod: true, justDid: justDid, agentsRunning: agents, workflowsRunning: workflows, items: items, request: request, ask: ask,
-            side: side, paused: paused, fromTaskList: taskList)
+            side: side, paused: paused, fromTaskList: taskList, task: task)
     }
     func next(_ text: String) -> Item { Item(text: text, isActive: false, waitsOnYou: false) }
     func yours(_ text: String) -> Item { Item(text: text, isActive: false, waitsOnYou: true) }
     func doing(_ text: String) -> Item { Item(text: text, isActive: true, waitsOnYou: false) }
     return [
         row("tracker", "Payments Deposit Tracker", "needs-you", 1, justDid: "Console suite passed · 1,180 tests",
-            ask: "Allow: deploy v2.4.1 to the sandbox"),
+            ask: "Allow: deploy v2.4.1 to the sandbox", task: "Ship v2.4.1, the deposit matching fix: sandbox, then live"),
         row("mobile", "Payments Mobile Build", "working", 6, justDid: "Phone layout, Trades tab, money forms",
-            items: [doing("View-only note on Review and Staff"), next("Test on your iPhone"), next("Release: sandbox, then live")]),
+            items: [doing("View-only note on Review and Staff"), next("Test on your iPhone"), next("Release: sandbox, then live")],
+            task: "Make the payments app work on phones"),
         row("board", "Session Board", "working", 7, justDid: "Dismiss flow drawn",
             items: [next("Settings panel"), next("Sound behaviour, as an mp4")],
             side: "Fixing the board/chat status mismatch", paused: "Light theme and remaining states"),

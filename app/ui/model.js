@@ -102,6 +102,8 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
       justDid: rec?.summary?.done ?? '',
       side: rec?.summary?.side ?? '',
       paused: rec?.summary?.paused ?? '',
+      // The task the session is on, in a line anyone could follow (the summary's)
+      task: rec?.summary?.task ?? '',
       request: rec?.request ?? '',
       ask: status === 'needs-you' ? (rec?.ask ?? '') : '',
       agentsRunning: rec?.agentsRunning ?? 0,
@@ -192,6 +194,7 @@ export function cardLines(row, { jobs = [], removed = [], summaries = true } = {
   const visible = row.items.filter((i) => !gone.has(i.text))
   const working = row.status === 'working'
   const lines = []
+  if (row.task) lines.push({ kind: 'task', glyph: '◎', text: row.task })
   if (row.ask) lines.push({ kind: 'ask', glyph: '?', text: row.ask })
   if (row.side) lines.push({ kind: 'side', glyph: '↪', text: row.side })
   if (row.side && row.paused) lines.push({ kind: 'paused', glyph: '⏸', text: 'Paused: ' + row.paused })
@@ -214,7 +217,8 @@ export function sessionText(row, { jobs = [], removed = [], projectNames = true 
   const out = [`${shownName(row, projectNames)} (${label} ${ago(row.since)} · ${row.place})`]
   for (const l of cardLines(row, { jobs, removed })) {
     if (l.kind === 'caption') continue
-    if (l.kind === 'side') out.push('↪ side task: ' + l.text)
+    if (l.kind === 'task') out.push('◎ task: ' + l.text)
+    else if (l.kind === 'side') out.push('↪ side task: ' + l.text)
     else if (l.kind === 'paused') out.push('⏸ paused: ' + l.text.replace(/^Paused: /, ''))
     else if (l.kind === 'doing') out.push('▸ ' + l.text)
     else if (l.kind === 'waits') out.push('! ' + l.text + ' · waits on you')

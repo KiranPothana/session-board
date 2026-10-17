@@ -65,6 +65,10 @@ const ANSWER_TRIES = 3
 // What a summary reads: the last few exchanges, the latest reply at most this long, older
 // replies and the requests shorter
 const EXCHANGES = 4
+// The session's requests, kept on its record (each cut to a line): a long session's earlier ones,
+// beyond the exchanges a summary reads, tell it what the work is for
+const ASKS_KEPT = 12
+const ASK_LINE = 200
 // The model that writes the summaries, and how hard it thinks
 const SUMMARY_MODEL = 'sonnet'
 const SUMMARY_EFFORT = 'low'
@@ -77,17 +81,18 @@ const BUILD_MS = 10 * 60 * 1000
 const APP_NAME = 'Session Board.app'
 
 const SUMMARY_SYSTEM = [
-  'You keep a short to-do board for one Claude Code session: what the user would expect to see at a glance.',
-  "You get the session's last few exchanges, oldest first (each the user's request and the assistant's final reply; for the latest, first its notes along the way, oldest first: what it said as it worked), then the board as it was before.",
-  'Rebuild the board from the exchanges. Reply with JSON only: {"done": "...", "side": "...", "paused": "...", "active": [...], "pending": [...]}.',
+  'You keep a short to-do board for one Claude Code session. Someone at the company who has never seen the chat reads it to learn, at a glance, what task the session is on, what it is doing and what is still to do.',
+  "You get the session's earlier requests (cut short, oldest first), its last few exchanges, oldest first (each the user's request and the assistant's final reply; for the latest, first its notes along the way, oldest first: what it said as it worked), then the board as it was before.",
+  'Rebuild the board. Reply with JSON only: {"task": "...", "done": "...", "side": "...", "paused": "...", "active": [...], "pending": [...]}.',
+  'task: the task the session is on, in one line that person would understand without the chat: what is being built, fixed, shipped or decided, and what for, not the step under way ("Ship v1.20.195, the credit line coin fix: sandbox, then live"; "Show cloud sessions on the Mac board"). Name the product or feature, not the files. Keep the task from the board before, reworded only to make it clearer, while the session is still on it; a new one only when the user has moved the session to different work. Under 80 characters.',
   'side: when the user raised something in the middle of other work that still has open steps (a bug they spotted, a quick question, a detour), the work the session is doing for it right now; paused: the planned work it set aside for it. Both "" otherwise, and both "" again once the side task is finished and the planned work goes on. A request can be finished partway through a turn: when the notes show the assistant answered or finished the latest request and went back to earlier work, that request is done, side and paused are "", and the work it went back to is active. The board shows them on their own lines: while there is a side task, active does not name it again and pending does not repeat the paused work.',
   'done: the last piece of work the session finished, as one short line in plain words: what was achieved, not the commands run. "" when the exchanges show nothing finished yet.',
   'active: the work the session is doing now for the latest request, 0 to 2 items. When the latest request has no reply yet, or the assistant is still working on it, name that work, reading it in the light of the earlier exchanges (a "go ahead" continues what was planned). Work the assistant is still doing never waits on the user. When the latest reply is the assistant\'s final reply (its turn has ended), active is empty, even while a command or agent it left running goes on: the board shows those on their own line. What it will do once they finish (release after the tests pass) is pending, not active.',
-  'pending: what is still to do, 0 to 5 items, the ones that wait on the user first. One item per piece of work: never split one piece of work into its steps.',
+  'pending: what is still to do for the task, 0 to 5 items, the ones that wait on the user first: the steps still ahead at the level someone would plan the work (review, sandbox, go live, the next feature), not the next command or check. One item per piece of work: never split one piece of work into its steps.',
   'Mark a pending item "· waits on you" only when the session is stopped on the user for it right now: a reply asked them a question, asked for their approval or go, or asked them to do something themselves now, such as try, test, check, review, choose, run or tell it something ("please try it", "check it on your phone", "tell me which you prefer", "run this yourself"), and they have not answered it or done it since. A later message of theirs about something else (a side question, a detour) does not answer it: it still waits on them. Word that item as the user\'s step ("Test the new login · waits on you"). A step that needs the user later, after work the session is still doing or will do first (an iPhone check after the deploy it is running, a go for live after the sandbox), does not wait on them yet. While the session is still working, or a command it left running is still going, nothing waits on the user unless a reply asked them something they haven\'t answered. Never mark an active item.',
   'You also get the commands this session left running (tests, builds, servers, agents). Never list one that is still running as an item, since the board shows it; list what comes after it as pending. When none is left, work a reply said was running in the background has finished.',
-  'Keep an item only while the exchanges show it is still open: work the latest replies list as still to do, a question still unanswered, or work under way. Drop what they show as done, replaced, handled elsewhere or no longer wanted, and anything only an older exchange mentioned that the later ones moved past.',
-  'The board before is no evidence: an item on it that the exchanges do not show as still open is dropped. When an item is the same work as one on it, reuse that wording, so the board does not churn. One exception: an item on it marked "· waits on you" was asked of the user in a reply that may be older than the exchanges you see; keep it, still marked, unless the exchanges show the user answered it, did it, or the session dropped it.',
+  'Drop an item the exchanges show as done, replaced, handled elsewhere or no longer wanted.',
+  'The board before holds what earlier exchanges planned, which the few you see may not repeat: keep its pending items that are still part of the task unless the exchanges show them done, replaced or no longer wanted, or the replies since never mention them while saying the work is finished or shipped. When the task is new, start pending afresh: drop every item of the task before except those marked "· waits on you". Its active items are no evidence: they are rebuilt from the exchanges. When an item is the same work as one on it, reuse that wording, so the board does not churn. An item on it marked "· waits on you" was asked of the user in a reply that may be older than the exchanges you see; keep it, still marked, unless the exchanges show the user answered it, did it, or the session dropped it.',
   'List only what this session itself is doing or still has to do. Leave out remarks about other sessions.',
   'Never list an item the user removed from the board, even reworded.',
   'Each item is under 70 characters, in plain words, with no markdown and no ids.',
@@ -427,10 +432,17 @@ function clip(text, n) {
   return text.slice(0, head) + '\n[…]\n' + text.slice(-(n - head))
 }
 
+// The requests before the exchanges a summary reads (those it reads in full are left out)
+function earlierAsks(asks = [], exchanges = [], pendingAsk = '') {
+  const read = new Set([...exchanges.map((x) => oneLine(x.ask, ASK_LINE)), pendingAsk ? oneLine(pendingAsk, ASK_LINE) : ''])
+  return asks.filter((a) => !read.has(a)).slice(-8)
+}
+
 // What the summary model reads: the board before, the bullets the user removed, and the exchanges.
 // working: the assistant is still on the latest request, so its reply is only its text so far.
 // jobs: the commands it left running, as labels, or null when that isn't known.
-function summaryPrompt(before, removed, exchanges, pendingAsk, working = false, jobs = null) {
+function summaryPrompt(before, removed, exchanges, pendingAsk, working = false, jobs = null, earlier = []) {
+  const earlierNote = earlier.length > 0 ? `--- Earlier requests in this session, oldest first (cut short)\n${earlier.map((a) => '- ' + a).join('\n')}\n\n` : ''
   const removedNote = removed.length > 0 ? `\n\nItems the user removed from the board (never list these): ${JSON.stringify(removed)}` : ''
   const turns = exchanges.map((x, i) => {
     const latest = i === exchanges.length - 1 && !pendingAsk
@@ -444,7 +456,7 @@ function summaryPrompt(before, removed, exchanges, pendingAsk, working = false, 
   const conversation = turns.map((t, i) => `--- Exchange ${i + 1} of ${turns.length}\n${t}`).join('\n\n')
   const running = jobs === null ? ''
     : `\n\n--- Commands this session left running: ${jobs.length > 0 ? jobs.join(', ') : 'none'}`
-  return `${conversation}${running}\n\n--- The board before (for wording only; no evidence that an item is still open)\n${before}${removedNote}`
+  return `${earlierNote}${conversation}${running}\n\n--- The board before (its task and pending items carry over while still open; its active items are no evidence)\n${before}${removedNote}`
 }
 
 // What a command does, in plain words, from its command line (the window labels them the same way)
@@ -510,11 +522,11 @@ async function runningJobs($, registry) {
 
 // One summary call: the active and pending items, rebuilt from the last few exchanges. pendingAsk
 // is a request sent since, which has no reply yet.
-async function summarizeExchanges($, id, exchanges, pendingAsk, previous, working = false, jobs = null) {
+async function summarizeExchanges($, id, exchanges, pendingAsk, previous, working = false, jobs = null, earlier = []) {
   const removed = await removedFor($, id)
   const isRemoved = (item) => removed.includes(answered(item))
   const before = previous
-    ? JSON.stringify({ active: previous.active.filter((x) => !isRemoved(x)), pending: previous.pending.filter((x) => !isRemoved(x)) })
+    ? JSON.stringify({ task: previous.task ?? '', active: previous.active.filter((x) => !isRemoved(x)), pending: previous.pending.filter((x) => !isRemoved(x)) })
     : 'none'
   const call = $.model.complete({
     // Sonnet 5.5 at low effort: replayed on real moments, it read a long,
@@ -524,7 +536,7 @@ async function summarizeExchanges($, id, exchanges, pendingAsk, previous, workin
     effort: SUMMARY_EFFORT,
     maxTokens: 1000,
     system: SUMMARY_SYSTEM,
-    prompt: summaryPrompt(before, removed, exchanges, pendingAsk, working, jobs),
+    prompt: summaryPrompt(before, removed, exchanges, pendingAsk, working, jobs, earlier),
   })
   const answer = await Promise.race([call, $.clock.sleep(SUMMARY_TIMEOUT_MS).then(() => null)])
   if (answer === null) throw new Error('the summary call timed out')
@@ -548,6 +560,8 @@ async function summarizeExchanges($, id, exchanges, pendingAsk, previous, workin
   const same = (a, b) => a.replace(WAITS, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase() === b.replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
   const pending = keep(clean(json.pending, 5)).filter((x) => !paused || !same(x, paused))
   return {
+    // Kept from before when the model leaves it out
+    task: typeof json.task === 'string' && json.task.trim() ? oneLine(json.task, 90) : previous?.task ?? '',
     done: typeof json.done === 'string' ? oneLine(json.done, 90) : '',
     side,
     paused,
@@ -613,7 +627,8 @@ async function summarize($, { onlyIfNew = false } = {}) {
     const jobs = [...running.map((j) => j.label), ...backgroundLabels(me.agentsRunning, me.workflowsRunning)]
     me.jobsKey = [...jobs].sort().join(',')
     me.summaryTry = { at: started, stage: 'asking the model' }
-    me.summary = await summarizeExchanges($, me.id, exchanges.slice(-EXCHANGES), pendingAsk, me.summary, me.status !== 'idle', jobs)
+    const shown = exchanges.slice(-EXCHANGES)
+    me.summary = await summarizeExchanges($, me.id, shown, pendingAsk, me.summary, me.status !== 'idle', jobs, earlierAsks(me.asks, shown, pendingAsk))
     me.summaryTry = { at: started, stage: 'done' }
     me.summaryReply = latestReply
     delete me.summaryError
@@ -1384,6 +1399,7 @@ export function register(on) {
     if (me && (kind === 'composer' || kind === 'bridge') && typed) {
       awaitingReply = typed
       me.request = oneLine(typed, 140)
+      me.asks = [...(me.asks ?? []), oneLine(typed, ASK_LINE)].slice(-ASKS_KEPT)
       // What waited on them stays marked until the next summary says it's answered: a message
       // about something else doesn't answer it. (The window shows the marks only while idle.)
       if (me.status === 'needs-you') me.status = 'working'

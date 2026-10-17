@@ -608,7 +608,7 @@ test('the summary reads the last four exchanges, mid-turn messages included, and
   expect(prompt).toContain("Assistant's final reply:\nAdded the settings panel. Still to do: publish, which waits on your go.")
   expect(prompt).not.toContain('Looking at the settings code.')
   // The board before comes last, as wording only
-  expect(prompt).toContain('--- The board before (for wording only; no evidence that an item is still open)')
+  expect(prompt).toContain('--- The board before (its task and pending items carry over while still open; its active items are no evidence)')
 })
 
 test('an item that waits on you is never shown as work under way', async ($, on) => {
@@ -912,6 +912,37 @@ test('a side task and the work it paused come through the summary', async ($, on
   const summary = (saved.get('s:' + ME) as any).summary
   expect(summary.side).toBe('Fixing the board/chat status mismatch')
   expect(summary.paused).toBe('Light theme and remaining states')
+})
+
+test('the task line comes through the summary, and stays when a later summary leaves it out', async ($, on) => {
+  let board: any = { task: 'Ship v1.2, the login fix: sandbox, then live', done: 'Fixed the login', active: [], pending: ['Sandbox deploy', 'Go live'] }
+  const { saved } = stubEngine(on, { answer: () => board })
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await waitFor(() => !!(saved.get('s:' + ME) as any)?.summary)
+  expect((saved.get('s:' + ME) as any).summary.task).toBe('Ship v1.2, the login fix: sandbox, then live')
+  board = { done: 'Sandbox deploy passed', active: [], pending: ['Go live'] }
+  await $.turn.start({ text: 'deploy it', turnId: 't2' })
+  await $.turn.complete({ turnId: 't2', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await waitFor(() => (saved.get('s:' + ME) as any)?.summary?.done === 'Sandbox deploy passed')
+  expect((saved.get('s:' + ME) as any).summary.task).toBe('Ship v1.2, the login fix: sandbox, then live')
+})
+
+test('the summary reads the task before, and the requests older than the exchanges it reads', async ($, on) => {
+  const prompts: string[] = []
+  const { saved } = stubEngine(on, { prompts, answer: () => ({ task: 'Build the session pane', active: [], pending: [] }) })
+  saved.set('s:' + ME, { id: ME, summary: { task: 'Build the session pane', done: '', active: [], pending: ['Publish it'], at: 1 },
+    asks: ['plan the session pane, with tabs for each project', 'build the session pane'] })
+  await start($)
+  await send($, 'build the session pane')
+  await waitFor(() => prompts.length > 0)
+  const prompt = prompts.at(-1)!
+  expect(prompt).toContain('"task":"Build the session pane"')
+  expect(prompt).toContain('- plan the session pane, with tabs for each project')
+  // The request the exchanges show in full is not listed again
+  expect(prompt.split('Earlier requests')[1].split('---')[0]).not.toContain('- build the session pane')
+  expect((saved.get('s:' + ME) as any).asks.at(-1)).toBe('build the session pane')
 })
 
 test('a permission prompt records what it asks, and answering clears it', async ($, on) => {

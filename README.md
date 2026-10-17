@@ -58,7 +58,8 @@ It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) 
 
 ## What you get
 
-- **A row per session** active in the last 12 hours: needs you, working or idle, and for how long; what it just finished; and a short list of active and pending items.
+- **A row per session** active in the last 12 hours: needs you, working or idle, and for how long; the task it's on, in a line anyone could follow (◎); what it just finished; and a short list of active and pending items.
+- **Long sessions keep their thread.** The task line and the steps still ahead (review, sandbox, go live) carry over from summary to summary until the session finishes them or moves to other work, so a session 50 turns in still says what it's for, not just its latest command.
 - **Idle doesn't mean nothing is happening.** If a session finished its turn but left tests, a build or a server running, its row says "Still running: browser tests · 6m". The summary knows too, so it doesn't call work active once the command has ended.
 - **Needs you** shows when a permission prompt, a question or a plan approval is on screen. Items that wait on your answer are marked "waits on you".
 - **Follows what you're looking at.** The session open in Claude Desktop, Terminal or iTerm2 is highlighted and kept at the top of the list.
@@ -139,8 +140,8 @@ The app is signed ad hoc unless you have an Apple Development certificate. An ad
 Each call is small: about 2,000 tokens in and 100 out.
 
 That's a few small calls per turn, per session, billed to your Claude account like the rest of your Claude Code use.
-- Each call sends the last four requests and replies (about 15,000 characters at most) and the previous list.
-- The list is rebuilt from those exchanges each time, so finished or abandoned items drop off instead of piling up.
+- Each call sends the last four requests and replies (about 15,000 characters at most), up to eight earlier requests cut to a line each, and the previous list.
+- The list is rebuilt from those each time: finished or abandoned items drop off instead of piling up, and the task and the steps still ahead carry over while they're open.
 - To stop the calls, turn **Summaries by Sonnet** off in Settings. The board then shows each session's request and its own task list.
 
 **Everything else stays on your Mac.**
@@ -163,7 +164,7 @@ That's a few small calls per turn, per session, billed to your Claude account li
 Everything here is in `hooks/register.js` (the mod) and `hooks/session-title.mjs` (the one command hook).
 
 **What it sends, and where**
-- **Summaries:** the last few requests and replies of a session (about 15,000 characters at most) and its previous list, to Claude through Claude Code's own model call (`$.model.complete`, Sonnet at low effort), billed to your Claude account. Turn them off in Settings.
+- **Summaries:** the last few requests and replies of a session (about 15,000 characters at most), its earlier requests cut to a line each, and its previous list, to Claude through Claude Code's own model call (`$.model.complete`, Sonnet at low effort), billed to your Claude account. Turn them off in Settings.
 - **Naming** (only with "Also rename in Claude Code" on): a session's first request, to Claude the same way, for a short name.
 - **Bug reports, only when you ask** (you say "report", or click Report or a Feedback button): your description, versions, the window's settings, session counts, error messages and a crash's stack, with your home folder and user name removed and nothing from your chats. With the GitHub CLI signed in, to a public issue on this repo; otherwise to Session Board's report inbox (`session-board-reports.kiran-987.workers.dev`, a Cloudflare Worker that files it as an issue in a private repo).
 - **Windows and Linux:** the window app is downloaded from this repo's GitHub release for the plugin's version (`curl`), and checked against the SHA-256 in `app/release.json` before it's installed.
@@ -177,7 +178,7 @@ Everything here is in `hooks/register.js` (the mod) and `hooks/session-title.mjs
 - Windows and Linux: `curl` to download the window app, `sha256sum` or `Get-FileHash` to check it, `mkdir`, `mv`, `chmod` or `Move-Item`, `taskkill` to stop an old copy before replacing it, then `cmd /c start` or `nohup` to start it. For the install lock: `ln`, `mv` and `rm` on Linux; on Windows, PowerShell's `[IO.File]::Move` and `Remove-Item`.
 
 **What it writes**
-- Each session's record in Claude Code's plugin store (its status, request, step, task list and summary), deleted when the session ends.
+- Each session's record in Claude Code's plugin store (its status, its requests cut to a line each, step, task list and summary), deleted when the session ends.
 - In the shared folder (`~/Library/Application Support/session-board`, `%APPDATA%\session-board` or `~/.local/share/session-board`): `show-request` (from `/session-board`), `last-error.json` (a failed build, for a report), `built.sha`, and on Linux the downloaded app.
 - macOS: the window app in `~/Applications/Session Board.app`. Windows: `%LOCALAPPDATA%\Programs\Session Board`. Windows and Linux: `install.lock` in the app's folder while an install runs, removed after.
 - It edits no build, start-up, settings or instructions file of yours.
