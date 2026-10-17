@@ -124,7 +124,7 @@ To update: `claude plugin update session-board@session-board`.
 
 On a Mac the window asks for these permissions (Windows and Linux ask for none):
 
-- **Accessibility**, to read which session Claude Desktop has open, for the highlight. Without it, everything else still works. It's in System Settings → Privacy & Security → Accessibility.
+- **Accessibility**, to read which session Claude Desktop has open, for the highlight, and the cloud sessions in its sidebar. Without it, everything else still works. It's in System Settings → Privacy & Security → Accessibility.
 - **Automation for Terminal or iTerm2**, asked the first time one of them is in front, for the highlight there.
 
 The app is signed ad hoc unless you have an Apple Development certificate. An ad hoc rebuild after an update counts as a new app to macOS. If the highlight stops following Claude Desktop after an update, turn Session Board off and on again in the Accessibility list.
@@ -145,6 +145,7 @@ That's a few small calls per turn, per session, billed to your Claude account li
 
 **Everything else stays on your Mac.**
 - The window reads files Claude Code already writes: the session registry in `~/.claude/sessions` and the plugin's store.
+- On a Mac it also reads Claude Desktop's window, through Accessibility: which session is open (for the highlight), and the names and status of the sessions in its sidebar, and the latest lines of a cloud chat you have open there (for cloud cards). None of it leaves your Mac. Session names from Desktop's own session files (`~/Library/Application Support/Claude/claude-code-sessions`) tell its local sessions apart from cloud ones.
 - It talks to no server on its own.
 
 **Reports, only when you choose to send one.** Nothing is sent until you say **report** in a chat or click Report
@@ -203,6 +204,7 @@ Everything here is in `hooks/register.js` (the mod) and `hooks/session-title.mjs
   - the bullets you removed;
   - requests from `/session-board` to show the window;
   - `status.json`, which records what the highlight last saw.
+- **Cloud sessions** (on a Mac, with Claude Desktop): they run on Anthropic's machines, and nothing on your computer lists them, no file and no `claude` command. Claude Desktop's sidebar does, so the window reads it with the Accessibility permission the highlight uses. A cloud card shows the session's name, its group and whether it's running. Each time the session is open in Desktop, the window also reads its chat there: what it's doing now, what it last did and your last request. The card keeps those until the next time you open it. A row counts as cloud when its group has Desktop's cloud badge (or it's in the Cloud section) and it's no session this Mac knows. Only rows the sidebar shows are found: none in a collapsed group or behind "Show more". Clicking a card opens the session in Desktop.
 
 ## Uninstall
 
@@ -238,6 +240,7 @@ You'll get GitHub's notifications when it's answered or fixed.
 - **The highlight doesn't follow Claude Desktop:**
   - Check the Accessibility permission. `status.json` in the shared folder shows what the window saw.
   - The highlight reads Claude Desktop's window title ("<session> - Claude Code"), so a Desktop update can break it.
+- **A cloud session is missing:** open its group in Claude Desktop's sidebar (cloud cards come from the rows it shows), and keep Desktop's window on the current Space. `"$HOME/Applications/Session Board.app/Contents/MacOS/SessionBoard" --desktop-sidebar` prints the rows the window reads and which count as cloud. Desktop's sidebar isn't a documented interface, so an update can break this.
 
 ## Development
 

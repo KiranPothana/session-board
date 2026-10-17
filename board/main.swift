@@ -75,6 +75,8 @@ struct Row: Identifiable {
     // registry's formerNames) and the name without its project in front. Desktop keeps the name it
     // first had, so these let the highlight find a session renamed since.
     var otherNames: [String] = []
+    // A cloud session, read from Claude Desktop's sidebar (cloudRows): a name, a project and a status only
+    var isCloud = false
 
     // Idle for 12 hours; Board.isQuiet keeps the session you're viewing
     var isQuiet: Bool { status == "idle" && since > quietSeconds }
@@ -108,6 +110,22 @@ func baseName(_ path: String?) -> String {
 func openSession(_ row: Row) {
     // You're going to it: its popup has done its job
     (NSApp.delegate as? AppDelegate)?.toasts.removeRow(row.id)
+    if row.isCloud {
+        if let id = cloudIds[plainName(row.name)], let url = URL(string: "claude://claude.ai/code/" + id) {
+            NSWorkspace.shared.open(url)
+        } else {
+            // Its row, found again now: the sidebar redraws, and an element read earlier stops answering
+            let name = row.name
+            cloudQueue.async {
+                let element = desktopSidebarRows()?.first { sameName($0.name, name) }?.element
+                DispatchQueue.main.async {
+                    NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).first?.activate()
+                    if let element { AXUIElementPerformAction(element, kAXPressAction as CFString) }
+                }
+            }
+        }
+        return
+    }
     let desktopOpen = !NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).isEmpty
     if desktopOpen, !row.bridgeId.isEmpty, let url = URL(string: "claude://claude.ai/code/" + row.bridgeId) {
         NSWorkspace.shared.open(url)
@@ -263,13 +281,12 @@ var cachedSessionPage: AXUIElement?
 // Needs the Accessibility permission. Electron builds its accessibility tree only once a
 // client asks for it (AXManualAccessibility); the page's title then names the open session.
 // Two session names are the same one: case, spacing and curly or straight quotes aside
-func sameName(_ a: String, _ b: String) -> Bool {
-    func plain(_ s: String) -> String {
-        s.replacingOccurrences(of: "\u{2019}", with: "'").replacingOccurrences(of: "\u{2018}", with: "'")
-            .replacingOccurrences(of: "\u{201C}", with: "\"").replacingOccurrences(of: "\u{201D}", with: "\"")
-            .lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
-    }
-    return plain(a) == plain(b)
+func sameName(_ a: String, _ b: String) -> Bool { plainName(a) == plainName(b) }
+
+func plainName(_ s: String) -> String {
+    s.replacingOccurrences(of: "\u{2019}", with: "'").replacingOccurrences(of: "\u{2018}", with: "'")
+        .replacingOccurrences(of: "\u{201C}", with: "\"").replacingOccurrences(of: "\u{201D}", with: "\"")
+        .lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
 }
 
 // The names the front Desktop window gives its chat: the session page's title (it ends in
@@ -288,6 +305,7 @@ func desktopOpenSessionNames() -> [String] {
     // The page found last time, while it's still in the window in front and still names a session
     if let page = cachedSessionPage, let pageWindow = axAttr(page, kAXWindowAttribute), CFEqual(pageWindow, window),
        let title = axAttr(page, kAXTitleAttribute) as? String, title.hasSuffix(suffix) {
+        noteCloudId(page: page, name: String(title.dropLast(suffix.count)))
         return [String(title.dropLast(suffix.count))]
     }
     cachedSessionPage = nil
@@ -301,6 +319,7 @@ func desktopOpenSessionNames() -> [String] {
             if (axAttr(e, kAXRoleAttribute) as? String) == "AXWebArea", let title = axAttr(e, kAXTitleAttribute) as? String {
                 if title.hasSuffix(suffix) {
                     cachedSessionPage = e
+                    noteCloudId(page: e, name: String(title.dropLast(suffix.count)))
                     return [String(title.dropLast(suffix.count))]
                 }
                 if !title.trimmingCharacters(in: .whitespaces).isEmpty { others.append(title) }
@@ -313,6 +332,258 @@ func desktopOpenSessionNames() -> [String] {
     // A window of its own may be titled after its chat
     if let title = axAttr(window, kAXTitleAttribute) as? String, !title.trimmingCharacters(in: .whitespaces).isEmpty { others.append(title) }
     return others
+}
+
+// ---- Cloud sessions
+// They run on Anthropic's machines and leave nothing on this Mac, and no `claude` command lists
+// them (checked 2026-10-17). Claude Desktop's sidebar shows them, so the board reads it, with the
+// Accessibility permission the highlight already has. A sidebar row gives its name, the group it's
+// in and a status word ("Running"). Nothing on the row says "cloud", but a group of cloud sessions
+// has a cloud badge on its heading (and Desktop has a Cloud section): a row there is a cloud
+// session unless it's one this Mac knows (one of Desktop's own, or one on the board). Only rows the
+// sidebar shows are found: none in a collapsed group or behind "Show more", and none while
+// Desktop's window is closed or on another Space (the last ones read stay until Desktop quits).
+
+struct SidebarRow {
+    let name: String
+    let group: String
+    // The badge on its group's heading: "Cloud" for a group of cloud sessions, "Remote Control" for one of those
+    let badge: String
+    let state: String
+    // The row's own element, for opening it: Desktop opens a row it's asked to press. Read it fresh:
+    // one kept from an earlier read stops answering once the sidebar redraws
+    let element: AXUIElement
+}
+
+// The sidebar element, once found (finding it walks most of the window). Used on the cloud queue only.
+var cachedSidebar: AXUIElement?
+
+// The session rows in Desktop's sidebar while it shows Code sessions, or nil when it can't be
+// read (no permission, no window, Chat mode), so the caller keeps what it had
+func desktopSidebarRows() -> [SidebarRow]? {
+    guard AXIsProcessTrusted(),
+          let app = NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).first
+    else { return nil }
+    let ax = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetMessagingTimeout(ax, 0.5)
+    AXUIElementSetAttributeValue(ax, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    func isSidebar(_ e: AXUIElement) -> Bool {
+        (axAttr(e, kAXSubroleAttribute) as? String) == "AXLandmarkComplementary" && (axAttr(e, kAXDescriptionAttribute) as? String) == "Sidebar"
+    }
+    if let s = cachedSidebar, axAttr(s, kAXRoleAttribute) == nil || !isSidebar(s) { cachedSidebar = nil }
+    if cachedSidebar == nil {
+        guard let windows = axAttr(ax, kAXWindowsAttribute) as? [AXUIElement], !windows.isEmpty else { return nil }
+        var level = windows
+        search: for _ in 0..<16 {
+            var next: [AXUIElement] = []
+            for e in level {
+                if isSidebar(e) { cachedSidebar = e; break search }
+                next += (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+            }
+            if next.isEmpty || next.count > 2000 { break }
+            level = next
+        }
+    }
+    guard let sidebar = cachedSidebar else { return nil }
+    var rows: [SidebarRow] = []
+    var group = "", badge = ""
+    var codeMode: Bool?
+    // The status a row announces to screen readers ("Running"), from the element around the row
+    func state(_ e: AXUIElement, _ depth: Int = 0) -> String {
+        if (axAttr(e, kAXSubroleAttribute) as? String) == "AXApplicationStatus" {
+            let texts = ((axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []).compactMap { axAttr($0, kAXValueAttribute) as? String }
+            return texts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        }
+        if depth > 4 { return "" }
+        for c in (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
+            let s = state(c, depth + 1)
+            if !s.isEmpty { return s }
+        }
+        return ""
+    }
+    // In document order: a group's heading comes before its rows
+    func walk(_ e: AXUIElement, _ depth: Int) {
+        if depth > 30 { return }
+        let role = axAttr(e, kAXRoleAttribute) as? String ?? ""
+        let desc = axAttr(e, kAXDescriptionAttribute) as? String ?? ""
+        if role == "AXRadioButton", desc == "Code" { codeMode = (axAttr(e, kAXValueAttribute) as? NSNumber)?.boolValue ?? false }
+        if role == "AXImage", desc == "Cloud" || desc == "Remote Control" { badge = desc }
+        // Each session row has a "More options for <name>" menu next to it
+        if role == "AXPopUpButton", desc.hasPrefix("More options for "),
+           let holder = axAttr(e, kAXParentAttribute).flatMap({ axAttr($0 as! AXUIElement, kAXParentAttribute) }) {
+            let around = holder as! AXUIElement
+            let name = String(desc.dropFirst("More options for ".count))
+            let button = ((axAttr(around, kAXChildrenAttribute) as? [AXUIElement]) ?? [])
+                .first { (axAttr($0, kAXRoleAttribute) as? String) == "AXButton" } ?? around
+            rows.append(SidebarRow(name: name, group: group, badge: badge, state: state(around), element: button))
+            return
+        }
+        // A group's heading: its name, then its "Group and sort" menu (and a badge, read above)
+        var heading = ""
+        for c in (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
+            let role = axAttr(c, kAXRoleAttribute) as? String
+            if role == "AXPopUpButton", (axAttr(c, kAXDescriptionAttribute) as? String) == "Group and sort", !heading.isEmpty {
+                group = heading
+                badge = ""
+            }
+            heading = role == "AXButton" ? (axAttr(c, kAXTitleAttribute) as? String ?? "") : ""
+            walk(c, depth + 1)
+        }
+    }
+    walk(sidebar, 0)
+    return codeMode == true ? rows : nil
+}
+
+// What a cloud session is doing, read from its chat while Desktop shows it: your last request, what
+// it's doing now and what it last did. A finished reply is labelled for screen readers with its
+// first sentence ("Claude responded: …"), which is what it did. A reply still streaming has no
+// label: its latest narration is what it's doing, and its last named step is what it did. Desktop
+// keeps only the latest messages on the page, so a request scrolled away is kept from an earlier read.
+struct ChatGist: Equatable {
+    var request = ""
+    var now = ""
+    var did = ""
+}
+
+// The first sentence of a paragraph, for a card line
+func firstSentence(_ text: String) -> String {
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let r = t.range(of: #"[.!?:](\s|$)"#, options: .regularExpression) { return String(t[..<r.lowerBound]) }
+    return t
+}
+
+// The cloud or Remote Control chat Desktop shows (its page is claude.ai/…/session_…), by name,
+// with its gist; nil when it shows something else. On the cloud queue.
+func desktopOpenChat() -> (name: String, gist: ChatGist)? {
+    guard AXIsProcessTrusted(),
+          let app = NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).first
+    else { return nil }
+    let ax = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetMessagingTimeout(ax, 0.5)
+    guard let window = (axAttr(ax, kAXFocusedWindowAttribute) as! AXUIElement?) ?? (axAttr(ax, kAXWindowsAttribute) as? [AXUIElement])?.first
+    else { return nil }
+    let suffix = " - Claude Code"
+    var page: AXUIElement?
+    var level = [window]
+    search: for _ in 0..<14 {
+        var next: [AXUIElement] = []
+        for e in level {
+            if (axAttr(e, kAXRoleAttribute) as? String) == "AXWebArea", let t = axAttr(e, kAXTitleAttribute) as? String, t.hasSuffix(suffix) {
+                page = e
+                break search
+            }
+            next += (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+        }
+        if next.isEmpty || next.count > 400 { break }
+        level = next
+    }
+    guard let page, let title = axAttr(page, kAXTitleAttribute) as? String,
+          let id = (axAttr(page, kAXURLAttribute) as? URL)?.lastPathComponent, id.hasPrefix("session_") || id.hasPrefix("cse_")
+    else { return nil }
+    // The messages, in reading order. A long reply still streaming is an article holding its top;
+    // the rest of it comes after a "Load the rest of this message" marker, outside the article. So
+    // each line belongs to the last message before it.
+    struct Message {
+        var heading = ""
+        var streaming = false
+        // The last named step (a group described by its own words; a group of tool calls is
+        // described by a folder path instead) and the last paragraph of prose
+        var step = ""
+        var prose = ""
+    }
+    var messages: [Message] = []
+    func walk(_ e: AXUIElement, _ depth: Int) {
+        if depth > 40 { return }
+        let role = axAttr(e, kAXRoleAttribute) as? String ?? ""
+        let desc = axAttr(e, kAXDescriptionAttribute) as? String ?? ""
+        if (axAttr(e, kAXSubroleAttribute) as? String) == "AXDocumentArticle" {
+            messages.append(Message(streaming: desc == "Currently streaming message"))
+        } else if !messages.isEmpty {
+            let i = messages.count - 1
+            if role == "AXHeading", messages[i].heading.isEmpty, let t = axAttr(e, kAXTitleAttribute) as? String { messages[i].heading = t }
+            // (one word is the spinner on the step under way: "Creating")
+            if role == "AXGroup", desc.contains(" "), !desc.hasPrefix("/"), !desc.hasPrefix("~"), !desc.contains("\\") {
+                messages[i].step = desc
+                return
+            }
+            if role == "AXStaticText", let v = axAttr(e, kAXValueAttribute) as? String, v.count >= 30,
+               let first = v.first, first.isUppercase, !v.hasPrefix("Ran "), !v.hasPrefix("Read "),
+               !v.hasPrefix("You said: "), !v.hasPrefix("Claude responded: ") {
+                messages[i].prose = v
+            }
+        }
+        for c in (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] { walk(c, depth + 1) }
+    }
+    func find(_ e: AXUIElement, _ depth: Int) -> AXUIElement? {
+        if depth > 40 { return nil }
+        if (axAttr(e, kAXSubroleAttribute) as? String) == "AXApplicationGroup", (axAttr(e, kAXDescriptionAttribute) as? String) == "Chat messages" { return e }
+        for c in (axAttr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] { if let f = find(c, depth + 1) { return f } }
+        return nil
+    }
+    if let chat = find(page, 0) { walk(chat, 0) }
+    var gist = ChatGist()
+    var replied = false
+    for m in messages.reversed() {
+        if m.heading.hasPrefix("You said: ") {
+            gist.request = String(m.heading.dropFirst("You said: ".count))
+            break
+        }
+        if replied { continue }
+        replied = true
+        // A reply still streaming may be labelled too, but with the first sentence of a turn that
+        // has gone on since: its latest lines say more
+        if m.streaming {
+            gist.now = firstSentence(m.prose)
+            gist.did = m.step
+        }
+        if gist.now.isEmpty && gist.did.isEmpty && m.heading.hasPrefix("Claude responded: ") {
+            gist.did = String(m.heading.dropFirst("Claude responded: ".count))
+        }
+    }
+    return (String(title.dropLast(suffix.count)), gist)
+}
+
+// What a sidebar status word means on the board. Desktop's words aren't documented: "Running"
+// is the one seen (2026-10-17); one that asks for you counts as needing you; anything else is idle.
+func cloudStatus(_ state: String) -> String {
+    let s = state.lowercased()
+    if ["input", "approv", "permission", "waiting", "needs", "question"].contains(where: { s.contains($0) }) { return "needs-you" }
+    if ["running", "working", "thinking", "busy"].contains(where: { s.contains($0) }) { return "working" }
+    return "idle"
+}
+
+// The names of Desktop's own sessions (its Local ones), from the files it keeps for them: a
+// sidebar row with one of these names isn't a cloud session. Read at most every 30 seconds.
+var desktopLocalNames: (at: Date, names: Set<String>) = (.distantPast, [])
+func localDesktopNames() -> Set<String> {
+    if Date().timeIntervalSince(desktopLocalNames.at) < 30 { return desktopLocalNames.names }
+    let root = NSHomeDirectory() + "/Library/Application Support/Claude/claude-code-sessions"
+    var names = Set<String>()
+    let fm = FileManager.default
+    for account in (try? fm.contentsOfDirectory(atPath: root)) ?? [] {
+        for org in (try? fm.contentsOfDirectory(atPath: root + "/" + account)) ?? [] {
+            let dir = root + "/" + account + "/" + org
+            for file in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where file.hasPrefix("local_") && file.hasSuffix(".json") {
+                guard let d = readJSON(dir + "/" + file) else { continue }
+                if let t = d["title"] as? String, !t.isEmpty { names.insert(plainName(t)) }
+                for t in strings(d["previousTitles"]) { names.insert(plainName(t)) }
+            }
+        }
+    }
+    desktopLocalNames = (Date(), names)
+    return names
+}
+
+// A cloud session's id, by name, from the page Desktop shows it in (claude.ai/…/session_…): with
+// it, the card opens the session by its link rather than by pressing its sidebar row
+var cloudIds: [String: String] = [:]
+// Reading the sidebar takes a few hundred milliseconds: on a queue of its own, so the highlight doesn't wait
+let cloudQueue = DispatchQueue(label: "cloud")
+func noteCloudId(page: AXUIElement, name: String) {
+    guard let url = axAttr(page, kAXURLAttribute) as? URL else { return }
+    let id = url.lastPathComponent
+    guard id.hasPrefix("session_") || id.hasPrefix("cse_") else { return }
+    DispatchQueue.main.async { cloudIds[plainName(name)] = id }
 }
 
 // The shortcut that shows or hides the window from any app: a key and its modifiers, the way
@@ -1103,9 +1374,74 @@ final class Board: ObservableObject {
         focusTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.pollFocus() }
     }
 
+    // Cloud sessions as Desktop's sidebar showed them last, by row id ("cloud:<name>"), with when
+    // each took its status (the first read, for one already in it)
+    private var cloud: [String: (row: SidebarRow, status: String, since: Double)] = [:]
+    private var cloudScanRunning = false
+    // What each cloud session was doing when Desktop last showed it, by row id
+    private var cloudGists: [String: ChatGist] = [:]
+
+    // The cloud sessions to show: the sidebar rows that are no session this Mac knows
+    func cloudRows(now: Double, local: [Row]) -> [Row] {
+        let known = Set(local.flatMap { [$0.name] + $0.otherNames }.map(plainName)).union(localDesktopNames())
+        return cloud.compactMap { id, c in
+            if known.contains(plainName(c.row.name)) { return nil }
+            let gist = cloudGists[id]
+            let items = c.status == "working" && !(gist?.now ?? "").isEmpty ? [Item(text: gist!.now, isActive: true, waitsOnYou: false)] : []
+            return Row(id: id, pid: nil, name: c.row.name, place: c.row.group.isEmpty ? "cloud" : c.row.group, status: c.status,
+                       since: now - c.since, isRemote: false, isDesktop: false, hasMod: gist != nil, justDid: gist?.did ?? "", agentsRunning: 0,
+                       workflowsRunning: 0, items: items, request: gist?.request ?? "", ask: "", side: "", paused: "", fromTaskList: false,
+                       project: c.row.group, isCloud: true)
+        }
+    }
+
+    // Reads Desktop's sidebar off the main thread; the next reload shows what it found
+    func scanCloud() {
+        guard desktopRunning else {
+            if !cloud.isEmpty { cloud = [:] }
+            return
+        }
+        if cloudScanRunning || !AXIsProcessTrusted() { return }
+        cloudScanRunning = true
+        cloudQueue.async { [weak self] in
+            let found = desktopSidebarRows()
+            let open = desktopOpenChat()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.cloudScanRunning = false
+                if let found { self.takeCloud(found) }
+                if let open, open.gist != ChatGist() { self.takeGist(open.name, open.gist) }
+            }
+        }
+    }
+
+    // A request no longer on the page is kept from the read before
+    func takeGist(_ name: String, _ gist: ChatGist) {
+        let id = "cloud:" + plainName(name)
+        var g = gist
+        if g.request.isEmpty { g.request = cloudGists[id]?.request ?? "" }
+        cloudGists[id] = g
+    }
+
+    func takeCloud(_ found: [SidebarRow]) {
+        let at = Date().timeIntervalSince1970
+        var next: [String: (row: SidebarRow, status: String, since: Double)] = [:]
+        // Rows in a group Desktop badges as cloud, or in its Cloud section
+        for r in found where r.badge == "Cloud" || r.group == "Cloud" {
+            let id = "cloud:" + plainName(r.name)
+            let status = cloudStatus(r.state)
+            let old = cloud[id]
+            next[id] = (r, status, old.map { $0.status == status ? $0.since : at } ?? at)
+        }
+        cloud = next
+        cloudGists = cloudGists.filter { next[$0.key] != nil }
+    }
+
     func reload() {
         let now = Date().timeIntervalSince1970
-        rows = loadRows(now: now)
+        let local = loadRows(now: now)
+        let rank = ["needs-you": 0, "working": 1, "idle": 2]
+        rows = (local + cloudRows(now: now, local: local)).sorted { (rank[$0.status] ?? 3, $0.since) < (rank[$1.status] ?? 3, $1.since) }
         assignColors()
         // A dismissed session that needs you since it was dismissed comes back by itself
         for r in rows where dismissed.contains(r.id) && r.status == "needs-you" && now - r.since > (dismissedAt[r.id] ?? now) {
@@ -1123,6 +1459,7 @@ final class Board: ObservableObject {
         updateTheme()
         let running = !NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).isEmpty
         if running != desktopRunning { desktopRunning = running }
+        scanCloud()
         // Forget dismissals of sessions that have ended (never on an empty read)
         if !rows.isEmpty {
             let ids = Set(rows.map(\.id))
@@ -1718,6 +2055,7 @@ struct SessionCard: View {
 
     // Where the lines come from, when it isn't a summary
     var caption: String? {
+        if row.isCloud { return row.hasMod ? "Cloud · as Claude Desktop last showed it" : "Cloud · open it in Claude Desktop to see what it's doing" }
         if !row.hasMod { return "No task data yet" }
         if row.fromTaskList { return "From the session's own task list" }
         if summariesOff && row.items.isEmpty { return "Summaries are off · no task list in this session" }
@@ -1741,7 +2079,7 @@ struct SessionCard: View {
                             picking = false
                         }
                     }
-                Chip(text: row.isDesktop ? "DESKTOP" : row.isRemote ? "RC" : "CLI", ink: p.muted, border: p.chipBorder)
+                Chip(text: row.isCloud ? "CLOUD" : row.isDesktop ? "DESKTOP" : row.isRemote ? "RC" : "CLI", ink: p.muted, border: p.chipBorder)
                 if !row.side.isEmpty { Chip(text: "SIDE TASK", ink: p.violet, border: p.violetBorder) }
                 Spacer(minLength: 4)
                 if hoveringX {
@@ -3876,6 +4214,9 @@ func sampleRows() -> [Row] {
     drawingSnapshot = true
     let args = CommandLine.arguments
     let board = Board()
+    // The cloud sessions in Desktop's sidebar, read now rather than by the next reload
+    if let found = desktopSidebarRows() { board.takeCloud(found) }
+    if let open = desktopOpenChat() { board.takeGist(open.name, open.gist) }
     board.reload()
     board.jobs = backgroundJobs(sessions: liveSessionStarts())
     board.showSettings = args.contains("--settings") || args.contains("--shortcut-clash")
@@ -3986,6 +4327,19 @@ if let i = args.firstIndex(of: "--check-shortcut"), i + 3 < args.count,
    let code = UInt32(args[i + 1]), let mods = UInt32(args[i + 2]) {
     let s = Shortcut(keyCode: code, mods: mods, key: args[i + 3])
     print(s.display, "→", shortcutProblem(s) ?? (shortcutClashes(s).isEmpty ? "free" : shortcutClashes(s).joined(separator: " | ")))
+    exit(0)
+}
+// Prints the session rows in Claude Desktop's sidebar and which count as cloud, for troubleshooting
+if args.contains("--desktop-sidebar") {
+    let start = Date()
+    guard let rows = desktopSidebarRows() else { print("Desktop's sidebar can't be read (no permission, no window, or not in Code)"); exit(1) }
+    let local = localDesktopNames()
+    print("read in", Int(Date().timeIntervalSince(start) * 1000), "ms ·", rows.count, "rows ·", local.count, "local names")
+    if let open = desktopOpenChat() { print("open chat:", open.name, "· request:", open.gist.request, "· now:", open.gist.now, "· did:", open.gist.did) }
+    for r in rows {
+        let kind = !(r.badge == "Cloud" || r.group == "Cloud") ? "not cloud" : local.contains(plainName(r.name)) ? "local" : "CLOUD"
+        print(kind, "·", r.group, r.badge.isEmpty ? "" : "[\(r.badge)]", "·", r.name, "·", r.state.isEmpty ? "-" : r.state, "→", cloudStatus(r.state))
+    }
     exit(0)
 }
 // Prints each Claude Desktop window and the page titles in it, for troubleshooting the highlight
