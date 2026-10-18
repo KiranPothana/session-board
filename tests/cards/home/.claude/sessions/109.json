@@ -1,0 +1,11 @@
+{
+ "cwd": "/work/renamed",
+ "entrypoint": "claude-desktop",
+ "name": "Old hook name",
+ "nameSource": "hook",
+ "pid": 109,
+ "sessionId": "renamed",
+ "status": "idle",
+ "statusUpdatedAt": 1792329700000,
+ "updatedAt": 1792329700000
+}

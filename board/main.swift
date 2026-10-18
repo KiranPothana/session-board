@@ -19,7 +19,8 @@ import UniformTypeIdentifiers
 import CoreAudio
 import AudioToolbox
 
-let home = FileManager.default.homeDirectoryForCurrentUser.path
+// SESSION_BOARD_HOME points the board at another home folder: the card fixtures (tests/cards) do
+let home = ProcessInfo.processInfo.environment["SESSION_BOARD_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
 let registryDir = home + "/.claude/sessions"
 let storeDir = home + "/.claude/plugins/store"
 // The store files to read: one per install of the plugin (its id is name@marketplace)
@@ -151,7 +152,7 @@ func openSession(_ row: Row) {
 
 // Claude Desktop's own id ("local_…") for a session it runs, from its session files
 func desktopLocalId(_ cliId: String) -> String? {
-    let dir = NSHomeDirectory() + "/Library/Application Support/Claude/claude-code-sessions"
+    let dir = home + "/Library/Application Support/Claude/claude-code-sessions"
     guard let walker = FileManager.default.enumerator(atPath: dir) else { return nil }
     for case let path as String in walker where path.hasSuffix(".json") && (path as NSString).lastPathComponent.hasPrefix("local_") {
         if let d = readJSON(dir + "/" + path), d["cliSessionId"] as? String == cliId { return d["sessionId"] as? String }
@@ -234,7 +235,6 @@ func projectName(_ cwd: String?) -> String {
     if let known = projectCache[cwd] { return known }
     var root = cwd
     if let r = cwd.range(of: "/.claude/worktrees/") { root = String(cwd[..<r.lowerBound]) }
-    let home = NSHomeDirectory()
     var dir = root
     while dir.hasPrefix(home + "/") {
         let git = dir + "/.git"
@@ -602,7 +602,7 @@ struct DesktopSession {
 var desktopSessionCache: (at: Date, all: [String: DesktopSession]) = (.distantPast, [:])
 func desktopSessions() -> [String: DesktopSession] {
     if Date().timeIntervalSince(desktopSessionCache.at) < 30 { return desktopSessionCache.all }
-    let root = NSHomeDirectory() + "/Library/Application Support/Claude/claude-code-sessions"
+    let root = home + "/Library/Application Support/Claude/claude-code-sessions"
     var all: [String: DesktopSession] = [:]
     let fm = FileManager.default
     for account in (try? fm.contentsOfDirectory(atPath: root)) ?? [] {
@@ -1253,15 +1253,9 @@ final class Board: ObservableObject {
                 if r.status == "idle" && before == "working" { turnEnded[r.id] = now } else if r.status != "idle" { turnEnded[r.id] = nil }
             }
             guard r.status == "idle", let ended = turnEnded[r.id] else { continue }
-            let waits = r.items.contains { $0.waitsOnYou }
-            let running = r.ownWorkRunning(jobs[r.id] ?? [])
-            // The summary needs a few seconds after the turn ends to say whether something waits
-            if waits && now - ended < 90 {
+            if let kind = turnAlert(r, jobs: jobs[r.id] ?? [], sinceEnd: now - ended) {
                 turnEnded[r.id] = nil
-                if r.id != focusedId { moments.append((1, r)) }
-            } else if !waits && !running && now - ended >= 15 {
-                turnEnded[r.id] = nil
-                if r.id != focusedId { moments.append((2, r)) }
+                if r.id != focusedId { moments.append((kind, r)) }
             }
         }
         // The popup beside the board, for every moment (its sound may be off)
@@ -1477,7 +1471,11 @@ final class Board: ObservableObject {
     private var cloudMarks: [String: String] = [:]
 
     // The cloud sessions to show: the sidebar rows that are no session this Mac knows
-    func cloudRows(now: Double, local: [Row]) -> [Row] {
+    func cloudRows(now: Double, local: [Row]) -> [Row] { Board.cloudCards(cloud, gists: cloudGists, now: now, local: local) }
+
+    // Cards for the cloud sessions Desktop's sidebar showed, by row id, that are no session this
+    // Mac knows (also for the card fixtures, without a Board)
+    static func cloudCards(_ cloud: [String: (row: SidebarRow, status: String, since: Double)], gists cloudGists: [String: ChatGist], now: Double, local: [Row]) -> [Row] {
         let known = Set(local.flatMap { [$0.name] + $0.otherNames }.map(plainName)).union(localDesktopNames())
         let summaries = cloudSummaries()
         return cloud.compactMap { id, c in
@@ -2006,6 +2004,16 @@ func sessionText(_ row: Row, removed: [String], jobs: [BackgroundJob] = []) -> S
     }
     if row.items.isEmpty && row.justDid.isEmpty && !row.request.isEmpty { lines.append("you asked: " + row.request) }
     return lines.joined(separator: "\n")
+}
+
+// The alert a turn that ended `sinceEnd` seconds ago calls for, if any yet: 1 your turn (something
+// waits on you), 2 done (nothing waits and nothing it started still runs). The summary needs a
+// few seconds after the turn ends to say whether something waits.
+func turnAlert(_ r: Row, jobs: [BackgroundJob], sinceEnd: Double) -> Int? {
+    let waits = r.items.contains { $0.waitsOnYou }
+    if waits && sinceEnd < 90 { return 1 }
+    if !waits && !r.ownWorkRunning(jobs) && sinceEnd >= 15 { return 2 }
+    return nil
 }
 
 extension Row {
@@ -4597,6 +4605,29 @@ if let i = args.firstIndex(of: "--store-prefix"), i + 1 < args.count { storePref
 // The rows as the board reads them, one per line: name, status, and the session it was started from
 if args.contains("--rows") {
     for row in loadRows(now: Date().timeIntervalSince1970) { print([row.name, row.status, row.parent].joined(separator: " | ")) }
+    exit(0)
+}
+// Every card as text, with the alert its turn's end calls for 20 s on: --cards <now, ms>. With
+// SESSION_BOARD_HOME set to a fixture's folder (tests/cards), and the cloud rows Desktop's sidebar
+// would show from its session-board/sidebar.json ([{name, group, badge, state, since}])
+if let i = args.firstIndex(of: "--cards"), i + 1 < args.count, let nowMs = Double(args[i + 1]) {
+    let now = nowMs / 1000
+    let local = loadRows(now: now)
+    var cloud: [String: (row: SidebarRow, status: String, since: Double)] = [:]
+    let sidebar = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: appDir + "/sidebar.json")))) as? [[String: Any]] ?? []
+    for r in sidebar {
+        let row = SidebarRow(name: (r["name"] as? String) ?? "", group: (r["group"] as? String) ?? "", badge: (r["badge"] as? String) ?? "",
+                             state: (r["state"] as? String) ?? "", element: AXUIElementCreateApplication(0))
+        guard row.badge == "Cloud" || row.group == "Cloud" else { continue }
+        cloud["cloud:" + plainName(row.name)] = (row, cloudStatus(row.state), (number(r["since"]) ?? nowMs) / 1000)
+    }
+    let rows = (local + MainActor.assumeIsolated { Board.cloudCards(cloud, gists: [:], now: now, local: local) }).sorted { $0.name < $1.name }
+    for row in rows {
+        // A session that waits on you alerts as it starts waiting; an ended turn as turnAlert says
+        let alert = row.status == "needs-you" ? "needs you" : row.status != "idle" ? "none (working)"
+            : turnAlert(row, jobs: [], sinceEnd: 20).map { ["needs you", "your turn", "done"][$0] } ?? "held"
+        print(sessionText(row, removed: []) + "\nalert: " + alert + "\n")
+    }
     exit(0)
 }
 if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {

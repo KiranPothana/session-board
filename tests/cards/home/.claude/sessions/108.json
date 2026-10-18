@@ -1,0 +1,11 @@
+{
+ "cwd": "/work/parent",
+ "entrypoint": "claude-desktop",
+ "name": "Session board cloud detection",
+ "nameSource": "user",
+ "pid": 108,
+ "sessionId": "parent",
+ "status": "idle",
+ "statusUpdatedAt": 1792329700000,
+ "updatedAt": 1792329700000
+}

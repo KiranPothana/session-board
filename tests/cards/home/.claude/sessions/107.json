@@ -1,0 +1,11 @@
+{
+ "cwd": "/work/side",
+ "entrypoint": "claude-desktop",
+ "name": "Fix the parent bug",
+ "nameSource": "user",
+ "pid": 107,
+ "sessionId": "side",
+ "status": "busy",
+ "statusUpdatedAt": 1792329700000,
+ "updatedAt": 1792329700000
+}

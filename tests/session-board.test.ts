@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 // A second copy of the mod, standing for another session on the same computer
 import { readyApp as otherSession } from '../hooks/register.js'
+import cases from './transcripts/cases.js'
 
 const HOME = '/home/k'
 const ME = 'sess-me'
@@ -910,7 +911,7 @@ test('a background agent that reported back no longer counts as running', async 
 
 test('a command left running in the background counts until it reports back, if this process started it', async ($, on) => {
   const prompts: string[] = []
-  const registry = { ...REGISTRY, '202.json': { pid: 202, sessionId: 'sess-other', cwd: '/work/site', name: 'Site Fixes', status: 'idle', updatedAt: 0, startedAt: Date.parse('2026-10-18T14:00:00.000Z') } }
+  const registry = { ...REGISTRY, '202.json': { pid: 202, sessionId: 'sess-other', cwd: '/work/site', name: 'Site Fixes', status: 'shell', updatedAt: 0, startedAt: Date.parse('2026-10-18T14:00:00.000Z') } }
   const at = (o: object, ts: string) => line({ ...o, timestamp: ts })
   const run = (id: string, ts: string) => at({ type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'npm test', description: 'Run the team suite', run_in_background: true } }] } }, ts)
   const started = (id: string, task: string, ts: string) => at({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Command running in background with ID: ' + task }] }, toolUseResult: { stdout: '', backgroundTaskId: task } }, ts)
@@ -1483,3 +1484,32 @@ test('a session whose lock ran out and was taken over does not put its download 
   expect(disk.has(LINUX_APP)).toBe(true)
   expect(leftovers(disk)).toEqual([])
 })
+
+// The recorded conversations (tests/transcripts): each read the way the mod reads a saved
+// conversation, through a copy of READ_TAIL and READ_ASKS (tests/transcripts/check-pipeline.mjs
+// checks the copy against the shell)
+const expand = (lines: string[]) => lines.map((l) => l.replace(/<<pad:(\d+)>>/g, (_, n) => 'x'.repeat(Number(n)))).join('\n') + '\n'
+function readAsShell(file: string, bytes: number, asks: boolean) {
+  let lines = file.slice(-bytes).split('\n')
+  if (asks) lines = lines.filter((l) => !l.includes('"tool_result"') && /"type":"user"|"queued_command"/.test(l))
+  lines = lines.map((l) => l.replace(/"data":"[A-Za-z0-9+/=]{200,}"/g, '"data":""')).filter((l) => l.length <= 20000)
+  return asks ? lines.filter((l, i) => i < lines.length - 1 || l).slice(-300).join('\n') : lines.join('\n').slice(-600000)
+}
+
+for (const c of cases) {
+  test('recorded: ' + c.name, async ($, on) => {
+    const prompts: string[] = []
+    const file = expand(c.lines)
+    const run = (argv: string[]) => argv[0] === 'sh' && argv[1] === '-c' && /^tail /.test(argv[2])
+      ? { exitCode: 0, stdout: readAsShell(file, Number(argv[4]), argv[2].includes('grep -v')) } : undefined
+    const { saved, clock } = stubEngine(on, { prompts, run, size: file.length, registry: { ...REGISTRY, '202.json': c.registry } })
+    await start($)
+    await clock.advance(30_000)
+    await waitFor(() => (saved.get('s:sess-other') as any)?.turnEnded !== undefined && (!c.prompt || prompts.length > 0))
+    const rec = saved.get('s:sess-other') as any
+    for (const [k, v] of Object.entries(c.record)) expect([k, rec?.[k]]).toEqual([k, v])
+    if (c.asks) expect(rec.ask).toBeTruthy()
+    for (const p of c.prompt ?? []) expect(prompts[0]).toContain(p)
+    for (const p of c.lacks ?? []) expect(prompts[0]).not.toContain(p)
+  })
+}

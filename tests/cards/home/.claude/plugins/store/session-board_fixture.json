@@ -1,0 +1,151 @@
+{
+ "s:finished": {
+  "cwd": "/work/finished",
+  "id": "finished",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "Shipped the tab on desktop and mobile",
+   "pending": [],
+   "task": "Add the missing tab"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:long": {
+  "cwd": "/work/long",
+  "id": "long",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "",
+   "pending": [
+    "Decide whether the weekly digest goes to every team member or only to the owners, and whether it should include the payees added that week, the failed sends and the pending approvals, before the next release goes out \u00b7 waits on you"
+   ],
+   "task": "Plan the weekly digest email"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:lost-run": {
+  "commandsRunning": 0,
+  "cwd": "/work/lost-run",
+  "id": "lost-run",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "Ran the export check",
+   "pending": [],
+   "task": "Check the exports"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:parent": {
+  "cwd": "/work/parent",
+  "id": "parent",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "Opened the pull request",
+   "pending": [],
+   "task": "Show cloud sessions"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:prompt": {
+  "ask": "Bash: Run the database migration",
+  "cwd": "/work/prompt",
+  "id": "prompt",
+  "status": "needs-you",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [
+    "Running the migration"
+   ],
+   "at": 1792329880000,
+   "done": "",
+   "pending": [],
+   "task": "Add the payee table"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:question": {
+  "cwd": "/work/question",
+  "id": "question",
+  "request": "the screens look good, build the notices",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "All suites pass",
+   "pending": [
+    "Say whether to release to the sandbox \u00b7 waits on you"
+   ],
+   "task": "Build the notice emails"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:renamed": {
+  "cwd": "/work/renamed",
+  "id": "renamed",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "Drew the screens",
+   "pending": [],
+   "task": "Design the referral screens"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:running": {
+  "commandsRunning": 1,
+  "cwd": "/work/running",
+  "id": "running",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "Started both test runs",
+   "pending": [
+    "Commit once both runs pass"
+   ],
+   "task": "Fix the team tab"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:side": {
+  "cwd": "/work/side",
+  "id": "side",
+  "status": "working",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [
+    "Reading the session files"
+   ],
+   "at": 1792329880000,
+   "done": "",
+   "pending": [],
+   "task": "Fix the missing parent"
+  },
+  "turnEnded": false,
+  "updatedAt": 1792329940000
+ }
+}

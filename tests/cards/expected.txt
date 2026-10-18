@@ -1,0 +1,55 @@
+Desk team controls (idle 5m · renamed)
+◎ task: Design the referral screens
+✓ Drew the screens
+alert: done
+
+Email notices (idle 5m · question)
+◎ task: Build the notice emails
+✓ All suites pass
+! Say whether to release to the sandbox · waits on you
+alert: your turn
+
+Fix the parent bug (working 5m · side)
+↳ side session of Session board cloud detection
+◎ task: Fix the missing parent
+▸ Reading the session files
+alert: none (working)
+
+Lost run (idle 5m · lost-run)
+◎ task: Check the exports
+✓ Ran the export check
+alert: done
+
+Migration (needs you 5m · prompt)
+◎ task: Add the payee table
+? Bash: Run the database migration
+· Running the migration
+alert: needs you
+
+Missing tab (idle 5m · finished)
+◎ task: Add the missing tab
+✓ Shipped the tab on desktop and mobile
+alert: done
+
+Referral System (idle 30m · Cloud)
+◎ task: Add the referral screens
+✓ Money review passed
+! Approve the sandbox deploy · waits on you
+alert: your turn
+
+Session board cloud detection (idle 5m · parent)
+◎ task: Show cloud sessions
+✓ Opened the pull request
+alert: done
+
+Team runs (idle 5m · running)
+◎ task: Fix the team tab
+◷ still running: a background command
+✓ Started both test runs
+· Commit once both runs pass
+alert: held
+
+Weekly digest (idle 5m · long)
+◎ task: Plan the weekly digest email
+! Decide whether the weekly digest goes to every team member or only to the owners, and whether it should include the payees added that week, the failed sends and the pending approvals, before the next release goes out · waits on you
+alert: your turn
