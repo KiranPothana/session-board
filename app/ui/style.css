@@ -79,7 +79,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .lines { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
 .line { display: flex; font: 11.5px/1.32 var(--mono); color: var(--soft); position: relative; }
 .line .g { flex: none; width: 14px; }
-.line .t { min-width: 0; overflow-wrap: anywhere; }
+.line .t { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.line.ask .t { -webkit-line-clamp: 4; }
+/* The board's own tooltip, for text that's cut short (app.js places it) */
+#tip { position: fixed; z-index: 50; max-width: min(320px, calc(100vw - 16px)); padding: 6px 9px; border-radius: 6px; background: var(--cell-hover); border: 1px solid var(--chip-border); color: var(--text); font: 11.5px/1.35 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); pointer-events: none; }
+#tip[hidden] { display: none; }
 .line.task { color: var(--text); font-weight: 700; }
 .line.ask { color: var(--amber-text); font-weight: 700; }
 .line.side { color: var(--violet); }

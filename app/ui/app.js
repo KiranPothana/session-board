@@ -385,7 +385,7 @@ function card(row, n, prefix, dark) {
     if (l.kind === 'request') return `<div class="request">${esc(l.text)}</div>`
     if (l.kind === 'caption') return `<div class="caption">${esc(l.text)}</div>`
     const rm = l.removable ? `<button class="rm" data-action="remove-line" data-id="${esc(row.id)}" data-text="${esc(l.text)}" title="Remove this line; the summary won't add it back">✕</button>` : ''
-    const tip = l.all ? ` title="${esc(l.all.join('\n'))}"` : ''
+    const tip = l.all ? ` data-full="${esc(l.all.join('\n'))}"` : ''
     return `<div class="line ${l.kind}" data-copy="${esc(l.text)}"${tip}><span class="g">${l.kind === 'doing' ? '▶' : esc(l.glyph ?? '')}</span><span class="t">${esc(l.text)}</span>${rm}</div>`
   }).join('')
   const open = ui.openRemoved.has(row.id)
@@ -397,7 +397,7 @@ function card(row, n, prefix, dark) {
   return `<article class="card ${viewing ? 'viewing' : ''} ${row.status === 'idle' ? 'is-idle' : ''}" style="--ring:${ring}" data-card="${esc(row.id)}">
 <div class="top"><button class="tile" data-action="colours" data-id="${esc(row.id)}" style="${tileStyle(row, dark)}" title="Pick a colour for this session">${String(n).padStart(2, '0')}</button><span class="chip">${chip}</span>${row.side ? '<span class="chip side">SIDE TASK</span>' : ''}
 ${asking ? '<span class="dismiss-ask">Dismiss?</span>' : statusLabel(row)}<button class="dismiss" data-action="dismiss" data-id="${esc(row.id)}" title="Dismiss">✕</button></div>
-<button class="name" data-action="open" data-id="${esc(row.id)}" title="Open this session · ${esc(row.place)}">${twoTone(row, prefix)}</button>
+<button class="name" data-action="open" data-id="${esc(row.id)}" data-full="${esc(row.name)}">${twoTone(row, prefix)}</button>
 ${ui.coloursFor === row.id ? swatchPicker(row, dark) : ''}<div class="lines selectable">${body}${removedBlock}</div></article>`
 }
 
@@ -759,6 +759,42 @@ document.addEventListener('click', (e) => {
   savePrefs()
   render()
 })
+// The tooltip: a moment after the pointer rests on a name or line cut short, its whole text (or a
+// "still running" line's full list) beside the pointer, kept inside the window
+const tipEl = Object.assign(document.createElement('div'), { id: 'tip', hidden: true })
+document.body.append(tipEl)
+let tipTimer = null
+let tipOver = null
+function tipFor(target) {
+  const el = target.closest?.('.line .t, .name')
+  if (!el) return null
+  const line = el.closest('.line')
+  const list = line?.dataset.full
+  const cut = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1
+  if (list && list !== line.dataset.copy) return { el, text: list }
+  return cut ? { el, text: el.dataset.full ?? line?.dataset.copy ?? el.textContent } : null
+}
+function placeTip(x, y) {
+  const w = tipEl.offsetWidth, h = tipEl.offsetHeight
+  let left = x + 12, top = y + 18
+  if (top + h > innerHeight - 4) top = y - h - 10
+  tipEl.style.left = Math.max(4, Math.min(left, innerWidth - w - 4)) + 'px'
+  tipEl.style.top = Math.max(4, Math.min(top, innerHeight - h - 4)) + 'px'
+}
+document.addEventListener('mousemove', (e) => {
+  const found = tipFor(e.target)
+  if (found?.el !== tipOver) {
+    clearTimeout(tipTimer)
+    tipOver = found?.el ?? null
+    if (!found) { tipEl.hidden = true; return }
+    const show = () => { tipEl.textContent = found.text; tipEl.hidden = false; placeTip(e.clientX, e.clientY) }
+    if (tipEl.hidden) tipTimer = setTimeout(show, 250)
+    else show()
+  }
+})
+document.addEventListener('mouseleave', () => { clearTimeout(tipTimer); tipOver = null; tipEl.hidden = true })
+document.addEventListener('scroll', () => { tipEl.hidden = true; tipOver = null }, true)
+
 // Leaving the ✕ un-arms "Dismiss?"
 document.addEventListener('mouseover', (e) => {
   if (ui.dismissAsk && !e.target.closest(`[data-card="${CSS.escape(ui.dismissAsk)}"] .top`)) { ui.dismissAsk = null; render() }

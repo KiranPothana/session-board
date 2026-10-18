@@ -1,5 +1,6 @@
 // Six made-up sessions in the shape the window side reads, like the macOS app's --sample: how the
-// page is drawn outside Tauri, for screenshots. ?empty draws none.
+// page is drawn outside Tauri, for screenshots. ?empty draws none; ?long gives one card lines too
+// long to fit, for the tooltip.
 export function sampleState(now, params = new URLSearchParams()) {
   const min = 60_000
   const sessions = [
@@ -10,6 +11,11 @@ export function sampleState(now, params = new URLSearchParams()) {
     { id: 'tests', name: 'Ops console tests', project: 'ops', status: 'busy', ago: 12, chip: 'rc', rec: { status: 'working', tasks: [{ subject: 'Write the Review screen tests', status: 'in_progress' }, { subject: 'Fix the fixture balances', status: 'pending' }, { subject: 'Run the browser suite', status: 'pending' }] } },
     { id: 'cleanup', name: 'Mac storage cleanup', project: 'home', status: 'idle', ago: 180, chip: 'desktop', rec: { status: 'idle', request: 'find what’s using 200 GB in Library' } },
   ]
+  if (params.has('long')) {
+    sessions[1].name = 'Mobile Build for the phone layout, the Trades tab and the money forms'
+    sessions[1].rec.summary.task = 'Design and build the signup invite email for people invited without an account, with each desk’s own branding'
+    sessions[1].rec.summary.pending[0] = 'Test on your iPhone and an Android phone, in light and dark, with each desk’s own branding and a long payee list'
+  }
   const list = params.has('empty') ? [] : sessions
   const registry = {}
   const store = { 'session-board_sample.json': {} }

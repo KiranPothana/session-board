@@ -130,6 +130,8 @@ let building = null
 // The tool call under way (a permission prompt is for it)
 let callInProgress = null
 
+// A card line as kept: whole, up to this long (the window cuts it to fit and shows the rest on hover)
+const LINE_CHARS = 240
 const oneLine = (s, n) => {
   const line = String(s ?? '').split('\n').map((x) => x.trim()).find(Boolean) ?? ''
   return line.length > n ? line.slice(0, n - 1) + '…' : line
@@ -192,15 +194,15 @@ function stepOf(e) {
 // Keep the record's task list in step with the session's own task tools
 function trackTasks(e, r) {
   if (e.tool === 'TodoWrite' && Array.isArray(e.todos)) {
-    me.tasks = e.todos.map((t, i) => ({ id: String(i + 1), subject: oneLine(t.content, 90), status: t.status }))
+    me.tasks = e.todos.map((t, i) => ({ id: String(i + 1), subject: oneLine(t.content, LINE_CHARS), status: t.status }))
   } else if (e.tool === 'TaskCreate' && !r?.deny) {
     const id = r?.result?.task?.id ?? /#(\w+)/.exec(r?.text ?? '')?.[1] ?? String(me.tasks.length + 1)
-    me.tasks = [...me.tasks, { id: String(id), subject: oneLine(e.subject, 90), status: 'pending' }].slice(-30)
+    me.tasks = [...me.tasks, { id: String(id), subject: oneLine(e.subject, LINE_CHARS), status: 'pending' }].slice(-30)
   } else if (e.tool === 'TaskUpdate' && !r?.deny) {
     me.tasks = me.tasks.flatMap((t) => {
       if (t.id !== String(e.taskId)) return [t]
       if (e.status === 'deleted') return []
-      return [{ ...t, subject: e.subject ? oneLine(e.subject, 90) : t.subject, status: e.status ?? t.status }]
+      return [{ ...t, subject: e.subject ? oneLine(e.subject, LINE_CHARS) : t.subject, status: e.status ?? t.status }]
     })
   }
 }
@@ -549,20 +551,20 @@ async function summarizeExchanges($, id, exchanges, pendingAsk, previous, workin
     return marker.test(x) ? x.replace(marker, ' ').trim() + WAITS : x
   }
   const clean = (list, n) =>
-    (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x.trim()).slice(0, n).map((x) => waitsLast(oneLine(x, 90)))
+    (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x.trim()).slice(0, n).map((x) => waitsLast(oneLine(x, LINE_CHARS)))
   const keep = (list) => list.filter((x) => !isRemoved(x))
   // Something waiting on the user isn't work under way: it goes with the pending items
   const active = keep(clean(json.active, 2))
-  const side = typeof json.side === 'string' ? oneLine(json.side, 90) : ''
-  const paused = side && typeof json.paused === 'string' ? oneLine(json.paused, 90) : ''
+  const side = typeof json.side === 'string' ? oneLine(json.side, LINE_CHARS) : ''
+  const paused = side && typeof json.paused === 'string' ? oneLine(json.paused, LINE_CHARS) : ''
   // A side task is the work under way, and the board shows it and the work it paused on their
   // own lines: the lists don't repeat them
   const same = (a, b) => a.replace(WAITS, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase() === b.replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
   const pending = keep(clean(json.pending, 5)).filter((x) => !paused || !same(x, paused))
   return {
     // Kept from before when the model leaves it out
-    task: typeof json.task === 'string' && json.task.trim() ? oneLine(json.task, 90) : previous?.task ?? '',
-    done: typeof json.done === 'string' ? oneLine(json.done, 90) : '',
+    task: typeof json.task === 'string' && json.task.trim() ? oneLine(json.task, LINE_CHARS) : previous?.task ?? '',
+    done: typeof json.done === 'string' ? oneLine(json.done, LINE_CHARS) : '',
     side,
     paused,
     active: side ? [] : active.filter((x) => !x.endsWith(WAITS)),
