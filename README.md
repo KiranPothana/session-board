@@ -59,6 +59,7 @@ It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) 
 ## What you get
 
 - **A row per session** active in the last 12 hours: needs you, working or idle, and for how long; the task it's on, in a line anyone could follow (◎); what it just finished; and a short list of active and pending items.
+- **Claude Desktop's names.** A session Claude Desktop runs goes by the name its sidebar shows, and a side session it started from another says which one ("↳ Side session of …").
 - **Long sessions keep their thread.** The task line and the steps still ahead (review, sandbox, go live) carry over from summary to summary until the session finishes them or moves to other work, so a session 50 turns in still says what it's for, not just its latest command.
 - **Idle doesn't mean nothing is happening.** If a session finished its turn but left tests, a build or a server running, its row says "Still running: browser tests · 6m". The summary knows too, so it doesn't call work active once the command has ended.
 - **Needs you** shows when a permission prompt, a question or a plan approval is on screen. Items that wait on your answer are marked "waits on you".

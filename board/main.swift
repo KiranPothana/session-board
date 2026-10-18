@@ -79,6 +79,8 @@ struct Row: Identifiable {
     var isCloud = false
     // The task the session is on, in a line anyone could follow (the summary's), kept across summaries
     var task = ""
+    // For a side session Claude Desktop started from another: that session's name
+    var parent = ""
 
     // Idle for 12 hours; Board.isQuiet keeps the session you're viewing
     var isQuiet: Bool { status == "idle" && since > quietSeconds }
@@ -560,25 +562,44 @@ func cloudStatus(_ state: String) -> String {
     return "idle"
 }
 
-// The names of Desktop's own sessions (its Local ones), from the files it keeps for them: a
-// sidebar row with one of these names isn't a cloud session. Read at most every 30 seconds.
-var desktopLocalNames: (at: Date, names: Set<String>) = (.distantPast, [])
-func localDesktopNames() -> Set<String> {
-    if Date().timeIntervalSince(desktopLocalNames.at) < 30 { return desktopLocalNames.names }
+// Desktop's own sessions (its Local ones), from the files it keeps for them: the title its sidebar
+// shows, its former titles, and for a side session the session it was started from (Desktop's id).
+// By Desktop's id ("local_…") and by Claude Code's. Read at most every 30 seconds.
+struct DesktopSession {
+    let id: String
+    let title: String
+    let previousTitles: [String]
+    let parent: String
+}
+var desktopSessionCache: (at: Date, all: [String: DesktopSession]) = (.distantPast, [:])
+func desktopSessions() -> [String: DesktopSession] {
+    if Date().timeIntervalSince(desktopSessionCache.at) < 30 { return desktopSessionCache.all }
     let root = NSHomeDirectory() + "/Library/Application Support/Claude/claude-code-sessions"
-    var names = Set<String>()
+    var all: [String: DesktopSession] = [:]
     let fm = FileManager.default
     for account in (try? fm.contentsOfDirectory(atPath: root)) ?? [] {
         for org in (try? fm.contentsOfDirectory(atPath: root + "/" + account)) ?? [] {
             let dir = root + "/" + account + "/" + org
             for file in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where file.hasPrefix("local_") && file.hasSuffix(".json") {
-                guard let d = readJSON(dir + "/" + file) else { continue }
-                if let t = d["title"] as? String, !t.isEmpty { names.insert(plainName(t)) }
-                for t in strings(d["previousTitles"]) { names.insert(plainName(t)) }
+                guard let d = readJSON(dir + "/" + file), let id = d["sessionId"] as? String else { continue }
+                let session = DesktopSession(id: id, title: (d["title"] as? String) ?? "", previousTitles: strings(d["previousTitles"]),
+                                             parent: ((d["spawnedFrom"] as? [String: Any])?["sessionId"] as? String) ?? "")
+                all[id] = session
+                if let cli = d["cliSessionId"] as? String, !cli.isEmpty { all[cli] = session }
             }
         }
     }
-    desktopLocalNames = (Date(), names)
+    desktopSessionCache = (Date(), all)
+    return all
+}
+
+// The names of Desktop's own sessions: a sidebar row with one of these names isn't a cloud session
+func localDesktopNames() -> Set<String> {
+    var names = Set<String>()
+    for session in desktopSessions().values {
+        if !session.title.isEmpty { names.insert(plainName(session.title)) }
+        for t in session.previousTitles { names.insert(plainName(t)) }
+    }
     return names
 }
 
@@ -968,6 +989,7 @@ func loadRows(now: Double) -> [Row] {
 
     let rank = ["needs-you": 0, "working": 1, "idle": 2]
     let ids = Set(live.keys).union(records.keys)
+    let desktop = desktopSessions()
     return ids.map { id -> Row in
         let reg = live[id]
         let rec = records[id]
@@ -1000,6 +1022,10 @@ func loadRows(now: Double) -> [Row] {
         let derived = (reg?["nameSource"] as? String) == "derived"
         let aiTitle = titles[id] ?? ""
         let regName = derived && !aiTitle.isEmpty ? aiTitle : ((reg?["name"] as? String) ?? "")
+        // A session Claude Desktop runs goes by the title Desktop's sidebar shows: a name given in
+        // Claude Code since (by a hook, or the plugin naming a resumed session) never reaches Desktop
+        let hosted = desktop[(reg?["hostSessionId"] as? String) ?? ""] ?? desktop[id]
+        let shownName = !(hosted?.title ?? "").isEmpty ? hosted!.title : regName
 
         var items: [Item] = []
         if let rec {
@@ -1029,7 +1055,7 @@ func loadRows(now: Double) -> [Row] {
         return Row(
             id: id,
             pid: (reg?["pid"] as? NSNumber)?.intValue,
-            name: regName.isEmpty ? baseName(cwd) : regName,
+            name: shownName.isEmpty ? baseName(cwd) : shownName,
             place: baseName(cwd),
             status: status,
             since: now - changedMs / 1000,
@@ -1050,9 +1076,11 @@ func loadRows(now: Double) -> [Row] {
             project: projectName((reg?["cwd"] as? String) ?? cwd),
             bridgeId: (reg?["bridgeSessionId"] as? String) ?? "",
             runningLabels: (rec?["runningLabels"] as? [String: String]) ?? [:],
-            otherNames: otherNames(name: regName.isEmpty ? baseName(cwd) : regName, project: projectName((reg?["cwd"] as? String) ?? cwd),
-                                   former: ((reg?["formerNames"] as? [Any]) ?? []).compactMap { ($0 as? [String: Any])?["name"] as? String }),
-            task: ((rec?["summary"] as? [String: Any])?["task"] as? String) ?? ""
+            otherNames: otherNames(name: shownName.isEmpty ? baseName(cwd) : shownName, project: projectName((reg?["cwd"] as? String) ?? cwd),
+                                   former: ((reg?["formerNames"] as? [Any]) ?? []).compactMap { ($0 as? [String: Any])?["name"] as? String }
+                                       + [regName] + (hosted?.previousTitles ?? [])),
+            task: ((rec?["summary"] as? [String: Any])?["task"] as? String) ?? "",
+            parent: desktop[hosted?.parent ?? ""]?.title ?? ""
         )
     }
     .sorted { (rank[$0.status] ?? 3, $0.since) < (rank[$1.status] ?? 3, $1.since) }
@@ -1871,6 +1899,7 @@ func copyToPasteboard(_ text: String) {
 // A session as plain text, for pasting into a chat with Claude
 func sessionText(_ row: Row, removed: [String], jobs: [BackgroundJob] = []) -> String {
     var lines = [row.name + " (" + (row.status == "needs-you" ? "needs you" : row.status) + " " + ago(row.since) + " · " + row.place + ")"]
+    if !row.parent.isEmpty { lines.append("↳ side session of " + row.parent) }
     if !row.task.isEmpty { lines.append("◎ task: " + row.task) }
     if !row.ask.isEmpty { lines.append("? " + row.ask) }
     if !row.side.isEmpty { lines.append("↪ side task: " + row.side) }
@@ -2115,6 +2144,7 @@ struct SessionCard: View {
             .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
             VStack(alignment: .leading, spacing: 3) {
                 // The task, so anyone reading the card knows what the session is for
+                if !row.parent.isEmpty { ListLine(glyph: "↳", text: "Side session of " + row.parent, color: p.muted, maxLines: 1) }
                 if !row.task.isEmpty { ListLine(glyph: "◎", text: row.task, color: p.text, bold: true, maxLines: 2) }
                 if !row.ask.isEmpty { ListLine(glyph: "?", text: row.ask, color: p.amberText, bold: true) }
                 if !row.side.isEmpty {
@@ -4326,6 +4356,11 @@ func sampleRows() -> [Row] {
 let args = CommandLine.arguments
 // For trying the window against another install's records
 if let i = args.firstIndex(of: "--store-prefix"), i + 1 < args.count { storePrefix = args[i + 1] }
+// The rows as the board reads them, one per line: name, status, and the session it was started from
+if args.contains("--rows") {
+    for row in loadRows(now: Date().timeIntervalSince1970) { print([row.name, row.status, row.parent].joined(separator: " | ")) }
+    exit(0)
+}
 if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     exit(MainActor.assumeIsolated { snapshot(to: args[i + 1]) })
 }
