@@ -55,6 +55,9 @@ struct Row: Identifiable {
     let agentsRunning: Int
     // Workflows it started that are still running (their own agents aren't counted)
     let workflowsRunning: Int
+    // Commands it left running in the background that haven't reported back (from its
+    // conversation): a check on the running processes, which can miss one
+    var commandsRunning = 0
     let items: [Item]
     // The last request typed: shown, as what you asked, when there are no items to show
     let request: String
@@ -1115,6 +1118,7 @@ func loadRows(now: Double) -> [Row] {
             justDid: ((rec?["summary"] as? [String: Any])?["done"] as? String) ?? "",
             agentsRunning: (rec?["agentsRunning"] as? NSNumber)?.intValue ?? 0,
             workflowsRunning: (rec?["workflowsRunning"] as? NSNumber)?.intValue ?? 0,
+            commandsRunning: (rec?["commandsRunning"] as? NSNumber)?.intValue ?? 0,
             items: items,
             request: (rec?["request"] as? String) ?? "",
             ask: status == "needs-you" ? ((rec?["ask"] as? String) ?? "") : "",
@@ -1250,7 +1254,7 @@ final class Board: ObservableObject {
             }
             guard r.status == "idle", let ended = turnEnded[r.id] else { continue }
             let waits = r.items.contains { $0.waitsOnYou }
-            let running = !(jobs[r.id] ?? []).isEmpty || r.agentsRunning > 0 || r.workflowsRunning > 0
+            let running = r.ownWorkRunning(jobs[r.id] ?? [])
             // The summary needs a few seconds after the turn ends to say whether something waits
             if waits && now - ended < 90 {
                 turnEnded[r.id] = nil
@@ -1993,8 +1997,8 @@ func sessionText(_ row: Row, removed: [String], jobs: [BackgroundJob] = []) -> S
     if !row.side.isEmpty { lines.append("↪ side task: " + row.side) }
     if !row.paused.isEmpty { lines.append("⏸ paused: " + row.paused) }
     for item in row.items where row.status == "working" && item.isActive && !removed.contains(item.text) { lines.append("▸ " + item.text) }
-    if row.status != "working" && (!jobs.isEmpty || row.agentsRunning > 0 || row.workflowsRunning > 0) {
-        lines.append("◷ still running: " + runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels).joined(separator: "; "))
+    if row.status != "working" && row.ownWorkRunning(jobs) {
+        lines.append("◷ still running: " + runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, commands: row.unseenCommands(jobs), labels: row.runningLabels).joined(separator: "; "))
     }
     if !row.justDid.isEmpty { lines.append("✓ " + row.justDid) }
     for item in row.items where (row.status != "working" || !item.isActive) && !removed.contains(item.text) {
@@ -2004,14 +2008,24 @@ func sessionText(_ row: Row, removed: [String], jobs: [BackgroundJob] = []) -> S
     return lines.joined(separator: "\n")
 }
 
+extension Row {
+    // Work the session started that still runs after its turn: it isn't done yet, so no "done" alert
+    func ownWorkRunning(_ jobs: [BackgroundJob]) -> Bool {
+        !jobs.isEmpty || agentsRunning > 0 || workflowsRunning > 0 || commandsRunning > 0
+    }
+    // Background commands its conversation says still run that the process check didn't find
+    func unseenCommands(_ jobs: [BackgroundJob]) -> Int { max(0, commandsRunning - jobs.count) }
+}
+
 // What a session still runs, each by the description Claude gave it (else what its command line
 // suggests), the longest-running first, then workflows and background agents
-func runningItems(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0, labels: [String: String] = [:]) -> [String] {
+func runningItems(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0, commands: Int = 0, labels: [String: String] = [:]) -> [String] {
     var items: [String] = []
     for job in jobs.sorted(by: { $0.minutes > $1.minutes }) {
         let label = labels[job.key] ?? job.label
         if !items.contains(label) { items.append(label) }
     }
+    if commands > 0 { items.append(commands == 1 ? "a background command" : "\(commands) background commands") }
     if workflows > 0 { items.append(workflows == 1 ? "a workflow" : "\(workflows) workflows") }
     if agents > 0 { items.append(agents == 1 ? "a background agent" : "\(agents) background agents") }
     return items
@@ -2019,8 +2033,8 @@ func runningItems(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0, 
 
 // One line however many run: "Still running: run the browser suite · 6m", or with more
 // "Still running: run the browser suite, +2 more · 6m" (the card's tooltip lists them all)
-func stillRunning(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0, labels: [String: String] = [:]) -> String {
-    let items = runningItems(jobs, agents: agents, workflows: workflows, labels: labels)
+func stillRunning(_ jobs: [BackgroundJob], agents: Int = 0, workflows: Int = 0, commands: Int = 0, labels: [String: String] = [:]) -> String {
+    let items = runningItems(jobs, agents: agents, workflows: workflows, commands: commands, labels: labels)
     guard let first = items.first else { return "" }
     return "Still running: " + first + (items.count > 1 ? ", +\(items.count - 1) more" : "")
         + (jobs.isEmpty ? "" : " · " + ago(Double((jobs.map(\.minutes).max() ?? 0) * 60)))
@@ -2372,9 +2386,9 @@ struct SessionCard: View {
                 ForEach(row.status == "working" ? visible.filter(\.isActive) : [], id: \.self) { item in
                     ListLine(glyph: "", text: item.text, color: p.doing, symbol: "play.fill", glyphColor: p.green, onRemove: { onRemove(item.text) })
                 }
-                if row.status != "working" && (!jobs.isEmpty || row.agentsRunning > 0 || row.workflowsRunning > 0) {
-                    ListLine(glyph: "◷", text: stillRunning(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels), color: p.doing, maxLines: 2,
-                             fullText: runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels).joined(separator: "\n"))
+                if row.status != "working" && row.ownWorkRunning(jobs) {
+                    ListLine(glyph: "◷", text: stillRunning(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, commands: row.unseenCommands(jobs), labels: row.runningLabels), color: p.doing, maxLines: 2,
+                             fullText: runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, commands: row.unseenCommands(jobs), labels: row.runningLabels).joined(separator: "\n"))
                 }
                 if !row.justDid.isEmpty { ListLine(glyph: "✓", text: row.justDid, color: p.muted) }
                 ForEach(row.status == "working" ? visible.filter { !$0.isActive } : visible.filter(\.isActive) + visible.filter { !$0.isActive },

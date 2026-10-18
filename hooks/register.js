@@ -614,6 +614,7 @@ async function summarize($, { onlyIfNew = false } = {}) {
     if (answer && exchanges.length > 0 && !hasAnswer(exchanges)) exchanges = [...exchanges.slice(0, -1), { ...exchanges[exchanges.length - 1], reply: answer }]
     me.agentsRunning = own.agents ?? 0
     me.workflowsRunning = own.workflows ?? 0
+    me.commandsRunning = own.background ?? 0
     if (own.title) me.title = own.title
     if (exchanges.length === 0) exchanges = exchangesFromMessages(await $.session.messages())
     const pendingAsk = awaitingReply
@@ -626,7 +627,7 @@ async function summarize($, { onlyIfNew = false } = {}) {
     await syncRegistry($).catch(() => {})
     const running = describeJobs((await runningJobs($, liveReg)).get(me.id) ?? [], own.commands)
     me.runningLabels = describedOnly(running, own.commands)
-    const jobs = [...running.map((j) => j.label), ...backgroundLabels(me.agentsRunning, me.workflowsRunning)]
+    const jobs = [...running.map((j) => j.label), ...backgroundLabels(me.agentsRunning, me.workflowsRunning, me.commandsRunning, running.length)]
     me.jobsKey = [...jobs].sort().join(',')
     me.summaryTry = { at: started, stage: 'asking the model' }
     const shown = exchanges.slice(-EXCHANGES)
@@ -659,9 +660,11 @@ async function summarize($, { onlyIfNew = false } = {}) {
 }
 
 // Background agents and workflows, as the summary is told: one label each, without the count,
-// so twenty agents finishing one by one don't redo the summary twenty times
-function backgroundLabels(agents = 0, workflows = 0) {
+// so twenty agents finishing one by one don't redo the summary twenty times. Commands the
+// conversation says still run, beyond those found among the running processes, count as one more.
+function backgroundLabels(agents = 0, workflows = 0, commands = 0, found = 0) {
   return [
+    ...(commands > found ? ['a background command'] : []),
     ...(workflows === 1 ? ['a workflow'] : workflows > 1 ? ['workflows'] : []),
     ...(agents === 1 ? ['a background agent'] : agents > 1 ? ['background agents'] : []),
   ]
@@ -682,14 +685,18 @@ async function ownTranscriptPath($) {
       }
     }
   }
+  ownStartedAt = reg?.startedAt ?? ownStartedAt
   return transcriptPath(home, { cwd: reg?.cwd ?? me.cwd, sessionId: me.id })
 }
+// When this session's process started, from the registry
+let ownStartedAt = 0
 
 // This session's own saved conversation, read the way the catch-up pass reads the others'
 async function ownTranscript($) {
   try {
     // One more request than the summary reads, so the oldest one it reads is whole
-    return await readExchanges($, await ownTranscriptPath($), EXCHANGES + 1)
+    const path = await ownTranscriptPath($)
+    return await readExchanges($, path, EXCHANGES + 1, ownStartedAt)
   } catch {
     return { exchanges: [], step: '' }
   }
@@ -775,7 +782,7 @@ function answerText(tool, result, details) {
 }
 
 // From the end of a saved conversation: its last few exchanges, and the tool call under way
-function exchangesFromTranscript(tail) {
+function exchangesFromTranscript(tail, since = 0) {
   const entries = []
   // The first line is likely cut by the tail
   for (const line of tail.split('\n').slice(1)) {
@@ -795,7 +802,10 @@ function exchangesFromTranscript(tail) {
   // Agents and workflows it started that keep running after their call returns, and that no
   // notification has reported finished, by tool call id. Claude Code marks such a call's result
   // "async_launched"; older versions set run_in_background on the call itself. The agents a
-  // workflow runs are its own business: the workflow counts once.
+  // workflow runs are its own business: the workflow counts once. Commands it left running
+  // (Bash or Monitor in the background) count the same way: their result names a background
+  // task, and a notification reports it finished. Only what this process started can still run:
+  // a session reopened later lost the old one's.
   const launched = new Map()
   const running = new Map()
   // The title Claude gave the conversation (Claude Desktop shows it; the registry may only hold a
@@ -829,9 +839,12 @@ function exchangesFromTranscript(tail) {
     const c = d.message?.content
     if (d.type === 'user' && Array.isArray(c)) {
       for (const b of c) {
-        if (b?.type !== 'tool_result' || !launched.has(b.tool_use_id)) continue
+        if (b?.type !== 'tool_result') continue
         const r = d.toolUseResult
-        if (r?.status === 'async_launched' || r?.isAsync === true) running.set(b.tool_use_id, { kind: launched.get(b.tool_use_id), taskId: r?.taskId ?? r?.agentId ?? '' })
+        const at = Date.parse(d.timestamp) || 0
+        if (typeof r?.backgroundTaskId === 'string' && r.backgroundTaskId) running.set(b.tool_use_id, { kind: 'command', taskId: r.backgroundTaskId, at })
+        if (!launched.has(b.tool_use_id)) continue
+        if (r?.status === 'async_launched' || r?.isAsync === true) running.set(b.tool_use_id, { kind: launched.get(b.tool_use_id), taskId: r?.taskId ?? r?.agentId ?? '', at })
       }
     }
     if (d.type === 'assistant') ended = d.message?.stop_reason === 'end_turn'
@@ -873,7 +886,7 @@ function exchangesFromTranscript(tail) {
           if (b.name === 'Agent' || b.name === 'Task' || b.name === 'Workflow') {
             const kind = b.name === 'Workflow' ? 'workflow' : 'agent'
             launched.set(b.id, kind)
-            if (b.input?.run_in_background) running.set(b.id, { kind, taskId: '' })
+            if (b.input?.run_in_background) running.set(b.id, { kind, taskId: '', at: Date.parse(d.timestamp) || 0 })
           }
         }
       }
@@ -881,13 +894,14 @@ function exchangesFromTranscript(tail) {
   }
   const last = out[out.length - 1]
   const step = last?.lastTool ? stepOf({ tool: last.lastTool.name, ...(last.lastTool.input ?? {}) }) : ''
-  return { exchanges: asExchanges(out), step, count: out.length, ended, agents: [...running.values()].filter((r) => r.kind === 'agent').length,
-    workflows: [...running.values()].filter((r) => r.kind === 'workflow').length, pendingTool, title: customTitle || title, commands, lastAt }
+  const live = [...running.values()].filter((r) => !since || !r.at || r.at >= since)
+  return { exchanges: asExchanges(out), step, count: out.length, ended, agents: live.filter((r) => r.kind === 'agent').length,
+    workflows: live.filter((r) => r.kind === 'workflow').length, background: live.filter((r) => r.kind === 'command').length, pendingTool, title: customTitle || title, commands, lastAt }
 }
 
 // A saved conversation's last exchanges, reading back until it has `want` requests (or the
 // whole file, or the cap)
-async function readExchanges($, path, want) {
+async function readExchanges($, path, want, since = 0) {
   let size = Infinity
   try {
     size = (await $.fs.stat(path)).size
@@ -896,7 +910,7 @@ async function readExchanges($, path, want) {
   }
   for (let bytes = TAIL_START_BYTES; ; bytes = Math.min(bytes * 4, TAIL_MAX_BYTES)) {
     const out = await tailOf($, path, bytes)
-    const parsed = exchangesFromTranscript(out)
+    const parsed = exchangesFromTranscript(out, since)
     // Reading further back can't help once the output is full
     const full = out.length >= READ_OUT_BYTES - 1000
     if (parsed.count >= want || full || bytes >= size || bytes >= TAIL_MAX_BYTES) return parsed
@@ -936,11 +950,13 @@ async function checkOwnJobs($) {
     return summarize($)
   }
   if (!me.summary) return
-  const mine = [...describeJobs((await runningJobs($, registry)).get(me.id) ?? [], own.commands).map((j) => j.label), ...backgroundLabels(own.agents, own.workflows)].sort().join(',')
+  const found = describeJobs((await runningJobs($, registry)).get(me.id) ?? [], own.commands).map((j) => j.label)
+  const mine = [...found, ...backgroundLabels(own.agents, own.workflows, own.background, found.length)].sort().join(',')
   if (me.jobsKey === undefined || me.jobsKey !== mine) await summarize($)
-  else if ((own.agents ?? 0) !== (me.agentsRunning ?? 0) || (own.workflows ?? 0) !== (me.workflowsRunning ?? 0)) {
+  else if ((own.agents ?? 0) !== (me.agentsRunning ?? 0) || (own.workflows ?? 0) !== (me.workflowsRunning ?? 0) || (own.background ?? 0) !== (me.commandsRunning ?? 0)) {
     me.agentsRunning = own.agents ?? 0
     me.workflowsRunning = own.workflows ?? 0
+    me.commandsRunning = own.background ?? 0
     await publish($)
   }
 }
@@ -1084,7 +1100,7 @@ async function catchUp($) {
     if (seenTranscripts.get(id) === mark && !jobsChanged && !statusMoved) continue
     seenTranscripts.set(id, mark)
     // The latest request and step need only the end; a summary reads further back
-    const { exchanges: recent, step, ended, agents, workflows, pendingTool, title, commands, lastAt } = await readExchanges($, path, 1)
+    const { exchanges: recent, step, ended, agents, workflows, background, pendingTool, title, commands, lastAt } = await readExchanges($, path, 1, reg.startedAt ?? 0)
     // Its running commands by the descriptions it gave them
     const described = describeJobs(running, commands)
     sessionJobs = described.map((j) => j.label)
@@ -1093,9 +1109,9 @@ async function catchUp($) {
     // the turn has ended while a command or a background agent it started still runs: the
     // conversation's end of turn decides. "waiting" is waiting on the user.
     const busy = !ended && (reg.status === 'busy' || reg.status === 'shell')
-    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, runningLabels: describedOnly(running, commands), step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, title: title || rec?.title || '', lastMessageAt: lastAt || rec?.lastMessageAt, ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
+    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, runningLabels: describedOnly(running, commands), step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, commandsRunning: background ?? 0, title: title || rec?.title || '', lastMessageAt: lastAt || rec?.lastMessageAt, ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
     // Background agents count as jobs too, for the summary and for noticing when they finish
-    sessionJobs.push(...backgroundLabels(agents, workflows))
+    sessionJobs.push(...backgroundLabels(agents, workflows, background, sessionJobs.length))
     if (latest) next.request = oneLine(latest.ask, 140)
     // A request the board hasn't seen yet, a finished turn, or a long one
     const newAsk = !!latest && latest.ask !== rec?.summaryAsk

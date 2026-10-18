@@ -113,6 +113,9 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
       // registry's) and its name without the project in front. Desktop keeps the name it first had.
       otherNames: otherNames(name, project, (Array.isArray(reg.formerNames) ? reg.formerNames : []).map((f) => f?.name)),
       workflowsRunning: rec?.workflowsRunning ?? 0,
+      // Commands it left running in the background that haven't reported back (from its
+      // conversation): a check on the running processes, which can miss one
+      commandsRunning: rec?.commandsRunning ?? 0,
       startedAt: reg.startedAt ?? 0,
     })
   }
@@ -174,6 +177,8 @@ export function sharedPrefixes(shown, projectNames = true) {
 export function runningItems(row, jobs = []) {
   const labels = row.runningLabels ?? {}
   const items = [...new Set([...jobs].sort((a, b) => b.minutes - a.minutes).map((j) => labels[j.key] ?? j.label))]
+  const unseen = Math.max(0, (row.commandsRunning ?? 0) - jobs.length)
+  if (unseen) items.push(unseen === 1 ? 'a background command' : `${unseen} background commands`)
   if (row.workflowsRunning) items.push(row.workflowsRunning === 1 ? 'a workflow' : `${row.workflowsRunning} workflows`)
   if (row.agentsRunning) items.push(row.agentsRunning === 1 ? 'a background agent' : `${row.agentsRunning} background agents`)
   return items
@@ -329,7 +334,7 @@ export class Attention {
       const ended = this.ended.get(row.id)
       if (ended === undefined || this.settled.get(row.id) !== 'idle') continue
       const waits = row.items.some((i) => i.waitsOnYou)
-      const running = (jobs[row.id] ?? []).length || row.agentsRunning || row.workflowsRunning
+      const running = (jobs[row.id] ?? []).length || row.agentsRunning || row.workflowsRunning || row.commandsRunning
       let kind = null
       if (waits && now - ended < YOUR_TURN_WINDOW_MS) kind = YOUR_TURN
       else if (!waits && !running && now - ended >= DONE_DELAY_MS) kind = DONE

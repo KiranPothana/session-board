@@ -908,6 +908,29 @@ test('a background agent that reported back no longer counts as running', async 
   expect((saved.get('s:sess-other') as any).agentsRunning).toBe(0)
 })
 
+test('a command left running in the background counts until it reports back, if this process started it', async ($, on) => {
+  const prompts: string[] = []
+  const registry = { ...REGISTRY, '202.json': { pid: 202, sessionId: 'sess-other', cwd: '/work/site', name: 'Site Fixes', status: 'idle', updatedAt: 0, startedAt: Date.parse('2026-10-18T14:00:00.000Z') } }
+  const at = (o: object, ts: string) => line({ ...o, timestamp: ts })
+  const run = (id: string, ts: string) => at({ type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'npm test', description: 'Run the team suite', run_in_background: true } }] } }, ts)
+  const started = (id: string, task: string, ts: string) => at({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Command running in background with ID: ' + task }] }, toolUseResult: { stdout: '', backgroundTaskId: task } }, ts)
+  const reported = (task: string) => line({ type: 'user', message: { role: 'user', content: `<task-notification>\n<task-id>${task}</task-id>\n<status>completed</status>\n</task-notification>` } })
+  const tail = ['cut', ask('fix the team tab'),
+    // One the process before this one started: it ended with that process
+    run('toolu_old', '2026-10-18T13:00:00.000Z'), started('toolu_old', 'bold', '2026-10-18T13:00:01.000Z'),
+    run('toolu_a', '2026-10-18T14:03:00.000Z'), started('toolu_a', 'ba', '2026-10-18T14:03:01.000Z'),
+    run('toolu_b', '2026-10-18T14:09:00.000Z'), started('toolu_b', 'bb', '2026-10-18T14:09:01.000Z'),
+    reported('ba'), finished("Both team runs are going. I'll commit when they finish.")].join('\n')
+  const { saved, clock } = stubEngine(on, { prompts, registry, tail })
+  await start($)
+  await clock.advance(30_000)
+  await waitFor(() => (saved.get('s:sess-other') as any)?.commandsRunning !== undefined)
+  expect((saved.get('s:sess-other') as any).commandsRunning).toBe(1)
+  await waitFor(() => prompts.length > 0)
+  // The summary hears of it though no running process was found for it
+  expect(prompts[0]).toContain('--- Commands this session left running: a background command')
+})
+
 test('a cloud chat the window kept is summarized like a session, once per change', async ($, on) => {
   const prompts: string[] = []
   const writes: string[][] = []
