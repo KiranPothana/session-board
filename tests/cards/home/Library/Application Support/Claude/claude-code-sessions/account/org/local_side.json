@@ -1,0 +1,8 @@
+{
+ "cliSessionId": "side",
+ "sessionId": "local_side",
+ "spawnedFrom": {
+  "sessionId": "local_parent"
+ },
+ "title": "Fix the parent bug"
+}

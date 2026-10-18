@@ -35,6 +35,12 @@ const TAIL_MAX_BYTES = 32000000
 // command's output is cut at a limit, and a cut keeps the start: the cap keeps the end instead.
 const READ_OUT_BYTES = 600000
 const READ_TAIL = `tail -c "$1" "$2" | sed -E 's/"data":"[A-Za-z0-9+\\/=]{200,}"/"data":""/g' | awk 'length($0) <= 20000' | tail -c ${READ_OUT_BYTES}`
+// A long turn's tool output can fill that whole read before it reaches back to the turn's
+// request, and a summary without the request keeps the card it had. Then the requests (and the
+// notices of background work, and messages sent mid-turn) are read on their own from further
+// back: the user lines that aren't tool results, and queued messages, the last READ_ASK_LINES.
+const READ_ASK_LINES = 300
+const READ_ASKS = `tail -c "$1" "$2" | grep -v '"tool_result"' | grep -E '"type":"user"|"queued_command"' | sed -E 's/"data":"[A-Za-z0-9+\\/=]{200,}"/"data":""/g' | awk 'length($0) <= 20000' | tail -n ${READ_ASK_LINES}`
 
 // How often, and for how long after a request, a session without a name looks for the one
 // Claude gives it; and the last name line in its saved conversation
@@ -165,9 +171,9 @@ const powershell = ($, script, timeoutMs) =>
 
 // A file's last `bytes` as text, read like READ_TAIL (the cap and the image data and long lines
 // left out), on any OS
-async function tailOf($, path, bytes) {
+async function tailOf($, path, bytes, asksOnly = false) {
   if ((await osOf($)) !== 'windows') {
-    const r = await $.process.run(['sh', '-c', READ_TAIL, 'sh', String(bytes), path], { timeoutMs: 20000 })
+    const r = await $.process.run(['sh', '-c', asksOnly ? READ_ASKS : READ_TAIL, 'sh', String(bytes), path], { timeoutMs: 20000 })
     return r.exitCode === 0 ? r.stdout ?? '' : ''
   }
   const script = [
@@ -175,7 +181,9 @@ async function tailOf($, path, bytes) {
     `try { $start = [Math]::Max(0, $f.Length - ${Number(bytes)}); [void]$f.Seek($start, 'Begin'); $buf = New-Object byte[] ($f.Length - $start); $n = 0`,
     `while ($n -lt $buf.Length) { $r = $f.Read($buf, $n, $buf.Length - $n); if ($r -le 0) { break }; $n += $r } } finally { $f.Close() }`,
     `$t = [Text.Encoding]::UTF8.GetString($buf, 0, $n) -replace '"data":"[A-Za-z0-9+/=]{200,}"', '"data":""'`,
-    `$t = ($t -split "\n" | Where-Object { $_.Length -le 20000 }) -join "\n"`,
+    asksOnly
+      ? `$t = ($t -split "\n" | Where-Object { $_.Length -le 20000 -and $_ -notmatch '"tool_result"' -and $_ -match '"type":"user"|"queued_command"' } | Select-Object -Last ${READ_ASK_LINES}) -join "\n"`
+      : `$t = ($t -split "\n" | Where-Object { $_.Length -le 20000 }) -join "\n"`,
     `if ($t.Length -gt ${READ_OUT_BYTES}) { $t = $t.Substring($t.Length - ${READ_OUT_BYTES}) }`,
     `[Console]::OutputEncoding = [Text.Encoding]::UTF8; [Console]::Out.Write($t)`,
   ].join('\n')
@@ -614,7 +622,7 @@ async function summarize($, { onlyIfNew = false } = {}) {
     if (answer && exchanges.length > 0 && !hasAnswer(exchanges)) exchanges = [...exchanges.slice(0, -1), { ...exchanges[exchanges.length - 1], reply: answer }]
     me.agentsRunning = own.agents ?? 0
     me.workflowsRunning = own.workflows ?? 0
-    me.commandsRunning = own.background ?? 0
+    me.commandsRunning = liveCommands(own.background, liveReg.get(me.id))
     if (own.title) me.title = own.title
     if (exchanges.length === 0) exchanges = exchangesFromMessages(await $.session.messages())
     const pendingAsk = awaitingReply
@@ -657,6 +665,13 @@ async function summarize($, { onlyIfNew = false } = {}) {
       }
     }
   }
+}
+
+// Background commands its conversation says still run, unless Claude Code says the session is
+// idle: it says "shell" while a command the session left running goes on, so a run that died
+// without reporting back (killed, or lost with its process) stops counting
+function liveCommands(count, reg) {
+  return reg?.status === 'idle' ? 0 : count ?? 0
 }
 
 // Background agents and workflows, as the summary is told: one label each, without the count,
@@ -911,10 +926,25 @@ async function readExchanges($, path, want, since = 0) {
   for (let bytes = TAIL_START_BYTES; ; bytes = Math.min(bytes * 4, TAIL_MAX_BYTES)) {
     const out = await tailOf($, path, bytes)
     const parsed = exchangesFromTranscript(out, since)
-    // Reading further back can't help once the output is full
+    // Reading further back the same way can't help once the output is full: the requests
+    // before it come from their own read
     const full = out.length >= READ_OUT_BYTES - 1000
+    if (full && parsed.count < want) return withEarlierAsks(out, await tailOf($, path, Math.min(size, TAIL_MAX_BYTES), true), since)
     if (parsed.count >= want || full || bytes >= size || bytes >= TAIL_MAX_BYTES) return parsed
   }
+}
+
+// A full read, with the requests from before it put in front: only the ones older than its first
+// whole line, so none is counted twice
+function withEarlierAsks(out, asks, since) {
+  const lines = out.split('\n').slice(1)
+  const first = lines.map((l) => /"timestamp":"([^"]+)"/.exec(l)?.[1]).find(Boolean)
+  const before = first ? Date.parse(first) : Infinity
+  const earlier = asks.split('\n').filter((l) => {
+    const at = /"timestamp":"([^"]+)"/.exec(l)?.[1]
+    return at && Date.parse(at) < before
+  })
+  return exchangesFromTranscript(['cut', ...earlier, ...lines].join('\n'), since)
 }
 
 // This session's own commands: when one ends (or starts) while it's idle, its board is out of
@@ -951,12 +981,13 @@ async function checkOwnJobs($) {
   }
   if (!me.summary) return
   const found = describeJobs((await runningJobs($, registry)).get(me.id) ?? [], own.commands).map((j) => j.label)
-  const mine = [...found, ...backgroundLabels(own.agents, own.workflows, own.background, found.length)].sort().join(',')
+  const background = liveCommands(own.background, registry.get(me.id))
+  const mine = [...found, ...backgroundLabels(own.agents, own.workflows, background, found.length)].sort().join(',')
   if (me.jobsKey === undefined || me.jobsKey !== mine) await summarize($)
-  else if ((own.agents ?? 0) !== (me.agentsRunning ?? 0) || (own.workflows ?? 0) !== (me.workflowsRunning ?? 0) || (own.background ?? 0) !== (me.commandsRunning ?? 0)) {
+  else if ((own.agents ?? 0) !== (me.agentsRunning ?? 0) || (own.workflows ?? 0) !== (me.workflowsRunning ?? 0) || background !== (me.commandsRunning ?? 0)) {
     me.agentsRunning = own.agents ?? 0
     me.workflowsRunning = own.workflows ?? 0
-    me.commandsRunning = own.background ?? 0
+    me.commandsRunning = background
     await publish($)
   }
 }
@@ -1100,7 +1131,8 @@ async function catchUp($) {
     if (seenTranscripts.get(id) === mark && !jobsChanged && !statusMoved) continue
     seenTranscripts.set(id, mark)
     // The latest request and step need only the end; a summary reads further back
-    const { exchanges: recent, step, ended, agents, workflows, background, pendingTool, title, commands, lastAt } = await readExchanges($, path, 1, reg.startedAt ?? 0)
+    const { exchanges: recent, step, ended, agents, workflows, background: noted, pendingTool, title, commands, lastAt } = await readExchanges($, path, 1, reg.startedAt ?? 0)
+    const background = liveCommands(noted, reg)
     // Its running commands by the descriptions it gave them
     const described = describeJobs(running, commands)
     sessionJobs = described.map((j) => j.label)
@@ -1109,7 +1141,7 @@ async function catchUp($) {
     // the turn has ended while a command or a background agent it started still runs: the
     // conversation's end of turn decides. "waiting" is waiting on the user.
     const busy = !ended && (reg.status === 'busy' || reg.status === 'shell')
-    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, runningLabels: describedOnly(running, commands), step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, commandsRunning: background ?? 0, title: title || rec?.title || '', lastMessageAt: lastAt || rec?.lastMessageAt, ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
+    const next = { tasks: [], ...(rec ?? {}), id, cwd: reg.cwd, shadow: true, runningLabels: describedOnly(running, commands), step: busy ? step : '', turnEnded: ended, agentsRunning: agents, workflowsRunning: workflows, commandsRunning: background, title: title || rec?.title || '', lastMessageAt: lastAt || rec?.lastMessageAt, ask: reg.status === 'waiting' && pendingTool ? askFor(pendingTool.name, pendingTool.input) : '', updatedAt: now }
     // Background agents count as jobs too, for the summary and for noticing when they finish
     sessionJobs.push(...backgroundLabels(agents, workflows, background, sessionJobs.length))
     if (latest) next.request = oneLine(latest.ask, 140)

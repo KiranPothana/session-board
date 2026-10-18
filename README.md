@@ -258,6 +258,13 @@ npx tauri dev                         # run the window from source
 SESSION_BOARD_SHARED_DIR=/tmp/sb npx tauri dev   # with its own shared folder: silent, always shown
 ```
 
+`sh tests/check-all.sh` runs every check before a change goes in: the mod's tests, the window's rules, and two sets of recorded cases.
+
+- **Recorded conversations** (`tests/transcripts`): real Claude Code conversations with every word replaced by filler of the same length (`anonymise.mjs`), each with the record and summary input the mod must make of it (`cases.js`). They cover a finished turn that asks you something after a long turn, a finished turn with nothing pending, a turn that ended with its background runs still going, a run that never reported back, one that failed, one from before the session was reopened, and a permission prompt.
+- **Cards** (`tests/cards`): a home folder of sessions, records, Claude Desktop's session files and a cloud row (`make-home.py`), and the text of every card the Mac board draws from it, with the alert each calls for (`expected.txt`). They cover the same cases, plus a cloud session, a side session with its parent, a Desktop session renamed after it was resumed, and text too long for two lines.
+
+When you fix a bug, add its case to both first and check that it fails without the fix.
+
 Open `app/ui/index.html` through any local web server to see the board with sample sessions (`?theme=light`, `?viewing=2`, `?empty`).
 
 Don't load a working copy and an installed copy at the same time: both would run every hook.
