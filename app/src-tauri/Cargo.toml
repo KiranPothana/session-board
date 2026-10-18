@@ -1,6 +1,6 @@
 [package]
 name = "session-board"
-version = "0.3.10"
+version = "0.3.11"
 description = "Session Board: every Claude Code session on this computer, in one window"
 authors = ["Kiran Pothana"]
 license = "MIT"
