@@ -464,7 +464,11 @@ func firstSentence(_ text: String) -> String {
 
 // The cloud or Remote Control chat Desktop shows (its page is claude.ai/…/session_…), by name,
 // with its gist; nil when it shows something else. On the cloud queue.
-func desktopOpenChat() -> (name: String, gist: ChatGist)? {
+struct ChatExchange: Equatable {
+    var ask: String
+    var reply: String
+}
+func desktopOpenChat() -> (name: String, id: String, gist: ChatGist, exchanges: [ChatExchange])? {
     guard AXIsProcessTrusted(),
           let app = NSRunningApplication.runningApplications(withBundleIdentifier: desktopBundle).first
     else { return nil }
@@ -500,6 +504,8 @@ func desktopOpenChat() -> (name: String, gist: ChatGist)? {
         // described by a folder path instead) and the last paragraph of prose
         var step = ""
         var prose = ""
+        // Everything it says, in order, for the summary (a step's own output is left out)
+        var lines: [String] = []
     }
     var messages: [Message] = []
     func walk(_ e: AXUIElement, _ depth: Int) {
@@ -515,6 +521,10 @@ func desktopOpenChat() -> (name: String, gist: ChatGist)? {
             if role == "AXGroup", desc.contains(" "), !desc.hasPrefix("/"), !desc.hasPrefix("~"), !desc.contains("\\") {
                 messages[i].step = desc
                 return
+            }
+            if role == "AXStaticText", let v = axAttr(e, kAXValueAttribute) as? String,
+               !v.hasPrefix("You said: "), !v.hasPrefix("Claude responded: "), !v.trimmingCharacters(in: .whitespaces).isEmpty {
+                messages[i].lines.append(v)
             }
             if role == "AXStaticText", let v = axAttr(e, kAXValueAttribute) as? String, v.count >= 30,
                let first = v.first, first.isUppercase, !v.hasPrefix("Ran "), !v.hasPrefix("Read "),
@@ -550,7 +560,22 @@ func desktopOpenChat() -> (name: String, gist: ChatGist)? {
             gist.did = String(m.heading.dropFirst("Claude responded: ".count))
         }
     }
-    return (String(title.dropLast(suffix.count)), gist)
+    // The exchanges on the page: each request and what was said after it, cut to what a summary reads
+    var exchanges: [ChatExchange] = []
+    for m in messages {
+        if m.heading.hasPrefix("You said: ") {
+            exchanges.append(ChatExchange(ask: String(m.heading.dropFirst("You said: ".count)), reply: ""))
+        } else if !exchanges.isEmpty {
+            let i = exchanges.count - 1
+            exchanges[i].reply += (exchanges[i].reply.isEmpty ? "" : "\n") + m.lines.joined(separator: "\n")
+        }
+    }
+    exchanges = exchanges.suffix(5).map { x in
+        var x = x
+        if x.reply.count > 20000 { x.reply = String(x.reply.prefix(8000)) + "\n…\n" + String(x.reply.suffix(12000)) }
+        return x
+    }
+    return (String(title.dropLast(suffix.count)), id, gist, exchanges)
 }
 
 // What a sidebar status word means on the board. Desktop's words aren't documented: "Running"
@@ -953,6 +978,42 @@ func liveSessionStarts() -> [(id: String, startedAt: Double)] {
 }
 
 // The same merge the mod's pane does: registry for who is alive, records for what they do
+// A summary's active and pending lists as a card's items
+func summaryItems(_ summary: [String: Any], status: String) -> [Item] {
+    // Something that waits on you isn't work under way, whatever list it came in
+    let active = strings(summary["active"])
+    return active.filter { !$0.hasSuffix(waitsSuffix) }.map { Item(text: $0, isActive: true, waitsOnYou: false) }
+        + (active.filter { $0.hasSuffix(waitsSuffix) } + strings(summary["pending"])).map { text in
+            // "waits on you" anywhere in it (older summaries put it first); a working
+            // session isn't waiting on you, whatever its last summary said
+            let waits = text.range(of: "waits on you", options: .caseInsensitive) != nil
+            let plain = waits ? text.replacingOccurrences(of: #"\s*[·•-]?\s*\(?waits on you\)?\s*[:–-]?\s*"#, with: " ",
+                                                          options: [.regularExpression, .caseInsensitive])
+                .trimmingCharacters(in: .whitespaces) : text
+            return Item(text: plain, isActive: false, waitsOnYou: waits && status == "idle")
+        }
+}
+
+// Where the window keeps the cloud chats it read, and the mod their summaries (hooks/register.js)
+let cloudDir = appDir + "/cloud"
+
+// The cloud chats' summaries the mod wrote, by row id ("cloud:<name>")
+func cloudSummaries() -> [String: [String: Any]] {
+    var all: [String: [String: Any]] = [:]
+    for file in (try? FileManager.default.contentsOfDirectory(atPath: cloudDir)) ?? [] where file.hasSuffix(".summary.json") {
+        if let d = readJSON(cloudDir + "/" + file), let row = d["rowId"] as? String, !row.isEmpty, let s = d["summary"] as? [String: Any] { all[row] = s }
+    }
+    return all
+}
+
+// A stable fingerprint of a chat (Swift's own hashes change with every launch), so the mod
+// summarizes it again only when it changed
+func fingerprint(_ text: String) -> String {
+    var h: UInt64 = 1469598103934665603
+    for b in text.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
+    return String(h, radix: 16)
+}
+
 func loadRows(now: Double) -> [Row] {
     var live: [String: [String: Any]] = [:]
     var hasRegistry = false
@@ -1036,19 +1097,8 @@ func loadRows(now: Double) -> [Row] {
                 items = tasks.map {
                     Item(text: ($0["subject"] as? String) ?? "", isActive: ($0["status"] as? String) == "in_progress", waitsOnYou: false)
                 }
-            } else if let summary, !(strings(summary["active"]).isEmpty && strings(summary["pending"]).isEmpty) {
-                // Something that waits on you isn't work under way, whatever list it came in
-                let active = strings(summary["active"])
-                items = active.filter { !$0.hasSuffix(waitsSuffix) }.map { Item(text: $0, isActive: true, waitsOnYou: false) }
-                    + (active.filter { $0.hasSuffix(waitsSuffix) } + strings(summary["pending"])).map { text in
-                        // "waits on you" anywhere in it (older summaries put it first); a working
-                        // session isn't waiting on you, whatever its last summary said
-                        let waits = text.range(of: "waits on you", options: .caseInsensitive) != nil
-                        let plain = waits ? text.replacingOccurrences(of: #"\s*[·•-]?\s*\(?waits on you\)?\s*[:–-]?\s*"#, with: " ",
-                                                                      options: [.regularExpression, .caseInsensitive])
-                            .trimmingCharacters(in: .whitespaces) : text
-                        return Item(text: plain, isActive: false, waitsOnYou: waits && status == "idle")
-                    }
+            } else if let summary {
+                items = summaryItems(summary, status: status)
             }
         }
 
@@ -1417,18 +1467,29 @@ final class Board: ObservableObject {
     private var cloudScanRunning = false
     // What each cloud session was doing when Desktop last showed it, by row id
     private var cloudGists: [String: ChatGist] = [:]
+    // The last chat written for the mod to summarize, by cloud session id
+    private var cloudMarks: [String: String] = [:]
 
     // The cloud sessions to show: the sidebar rows that are no session this Mac knows
     func cloudRows(now: Double, local: [Row]) -> [Row] {
         let known = Set(local.flatMap { [$0.name] + $0.otherNames }.map(plainName)).union(localDesktopNames())
+        let summaries = cloudSummaries()
         return cloud.compactMap { id, c in
             if known.contains(plainName(c.row.name)) { return nil }
             let gist = cloudGists[id]
-            let items = c.status == "working" && !(gist?.now ?? "").isEmpty ? [Item(text: gist!.now, isActive: true, waitsOnYou: false)] : []
+            let summary = summaries[id]
+            // The summary of its chat, as a local card's; while it works, the line Desktop shows it on
+            var items = summary.map { summaryItems($0, status: c.status) } ?? []
+            if c.status == "working", let now = gist?.now, !now.isEmpty, !items.contains(where: \.isActive) {
+                items.insert(Item(text: now, isActive: true, waitsOnYou: false), at: 0)
+            }
+            let done = (summary?["done"] as? String) ?? ""
             return Row(id: id, pid: nil, name: c.row.name, place: c.row.group.isEmpty ? "cloud" : c.row.group, status: c.status,
-                       since: now - c.since, isRemote: false, isDesktop: false, hasMod: gist != nil, justDid: gist?.did ?? "", agentsRunning: 0,
-                       workflowsRunning: 0, items: items, request: gist?.request ?? "", ask: "", side: "", paused: "", fromTaskList: false,
-                       project: c.row.group, isCloud: true)
+                       since: now - c.since, isRemote: false, isDesktop: false, hasMod: gist != nil || summary != nil,
+                       justDid: done.isEmpty ? gist?.did ?? "" : done, agentsRunning: 0,
+                       workflowsRunning: 0, items: items, request: gist?.request ?? "", ask: "",
+                       side: (summary?["side"] as? String) ?? "", paused: (summary?["paused"] as? String) ?? "", fromTaskList: false,
+                       project: c.row.group, isCloud: true, task: (summary?["task"] as? String) ?? "")
         }
     }
 
@@ -1448,8 +1509,25 @@ final class Board: ObservableObject {
                 self.cloudScanRunning = false
                 if let found { self.takeCloud(found) }
                 if let open, open.gist != ChatGist() { self.takeGist(open.name, open.gist) }
+                if let open, !open.exchanges.isEmpty { self.keepChat(open.name, id: open.id, exchanges: open.exchanges) }
             }
         }
+    }
+
+    // The chat Desktop shows, for the mod to summarize (cloud/<id>.json), when it changed
+    func keepChat(_ name: String, id: String, exchanges: [ChatExchange]) {
+        let row = "cloud:" + plainName(name)
+        guard cloud[row] != nil, id.range(of: #"^[\w-]+$"#, options: .regularExpression) != nil else { return }
+        let status = cloud[row]?.status ?? "idle"
+        let list = exchanges.map { ["ask": $0.ask, "reply": $0.reply] }
+        guard let body = try? JSONSerialization.data(withJSONObject: list, options: [.sortedKeys]) else { return }
+        let mark = fingerprint(status + (String(data: body, encoding: .utf8) ?? ""))
+        if cloudMarks[id] == mark { return }
+        let doc: [String: Any] = ["rowId": row, "name": name, "status": status, "readAt": Date().timeIntervalSince1970 * 1000,
+                                  "mark": mark, "exchanges": list]
+        guard let data = try? JSONSerialization.data(withJSONObject: doc) else { return }
+        try? FileManager.default.createDirectory(atPath: cloudDir, withIntermediateDirectories: true)
+        if (try? data.write(to: URL(fileURLWithPath: cloudDir + "/" + id + ".json"), options: .atomic)) != nil { cloudMarks[id] = mark }
     }
 
     // A request no longer on the page is kept from the read before
@@ -1472,6 +1550,14 @@ final class Board: ObservableObject {
         }
         cloud = next
         cloudGists = cloudGists.filter { next[$0.key] != nil }
+        // A cloud chat not read for a week, and its summary, are thrown away
+        let fm = FileManager.default
+        for file in (try? fm.contentsOfDirectory(atPath: cloudDir)) ?? [] {
+            let path = cloudDir + "/" + file
+            if let m = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date, at - m.timeIntervalSince1970 > 7 * 86400 {
+                try? fm.removeItem(atPath: path)
+            }
+        }
     }
 
     func reload() {
@@ -4378,12 +4464,24 @@ if let i = args.firstIndex(of: "--check-shortcut"), i + 3 < args.count,
     exit(0)
 }
 // Prints the session rows in Claude Desktop's sidebar and which count as cloud, for troubleshooting
+// The open chat's exchanges as the mod gets them, for troubleshooting
+if args.contains("--open-chat") {
+    guard let open = desktopOpenChat() else { print("no claude.ai chat open in Claude Desktop"); exit(1) }
+    let list = open.exchanges.map { ["ask": $0.ask, "reply": $0.reply] }
+    if let data = try? JSONSerialization.data(withJSONObject: ["name": open.name, "id": open.id, "exchanges": list], options: [.prettyPrinted]) {
+        print(String(data: data, encoding: .utf8) ?? "")
+    }
+    exit(0)
+}
 if args.contains("--desktop-sidebar") {
     let start = Date()
     guard let rows = desktopSidebarRows() else { print("Desktop's sidebar can't be read (no permission, no window, or not in Code)"); exit(1) }
     let local = localDesktopNames()
     print("read in", Int(Date().timeIntervalSince(start) * 1000), "ms ·", rows.count, "rows ·", local.count, "local names")
-    if let open = desktopOpenChat() { print("open chat:", open.name, "· request:", open.gist.request, "· now:", open.gist.now, "· did:", open.gist.did) }
+    if let open = desktopOpenChat() {
+        print("open chat:", open.name, "·", open.id, "· request:", open.gist.request, "· now:", open.gist.now, "· did:", open.gist.did)
+        for x in open.exchanges { print("  exchange · asked", x.ask.count, "chars · reply", x.reply.count, "chars ·", String(x.reply.suffix(160)).replacingOccurrences(of: "\n", with: " ")) }
+    }
     for r in rows {
         let kind = !(r.badge == "Cloud" || r.group == "Cloud") ? "not cloud" : local.contains(plainName(r.name)) ? "local" : "CLOUD"
         print(kind, "·", r.group, r.badge.isEmpty ? "" : "[\(r.badge)]", "·", r.name, "·", r.state.isEmpty ? "-" : r.state, "→", cloudStatus(r.state))
