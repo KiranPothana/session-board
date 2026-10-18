@@ -187,6 +187,16 @@ test('done 15 s after the turn ends, once nothing is still running', () => {
   assert.deepEqual(a.step([r('a', 'idle')], { now: t + 30_000 }).map((e) => e.kind), [DONE])
 })
 
+test('no done while its conversation says a background command still runs, though no process was found', () => {
+  const a = new Attention(); const t = 1_000_000
+  a.step([r('a', 'working')], { now: t }); a.step([r('a', 'working')], { now: t })
+  a.step([r('a', 'idle')], { now: t }); a.step([r('a', 'idle')], { now: t })
+  assert.deepEqual(a.step([r('a', 'idle', { commandsRunning: 1 })], { now: t + 30_000 }), [])
+  assert.deepEqual(a.step([r('a', 'idle')], { now: t + 60_000 }).map((e) => e.kind), [DONE])
+  assert.equal(stillRunning({ commandsRunning: 2 }, [{ label: 'tests', minutes: 3 }]), 'Still running: tests, +1 more · 3m')
+  assert.deepEqual(runningItems({ commandsRunning: 1 }, []), ['a background command'])
+})
+
 test('never for the session you are viewing', () => {
   const a = new Attention()
   a.step([r('a', 'working')]); a.step([r('a', 'working')])
