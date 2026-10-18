@@ -1002,6 +1002,51 @@ async function runReplays($) {
   }
 }
 
+// Cloud sessions leave nothing on this computer but what Claude Desktop shows of them: the Mac
+// window reads the chat Desktop has open and keeps its latest exchanges in cloud/<id>.json. Each
+// is summarized here like a local session's conversation, into cloud/<id>.summary.json, which
+// the window shows on the cloud card. Only a chat read again since its last summary is asked about,
+// and one still working at most every BUSY_RESUMMARY_MS.
+const CLOUD_DAY_MS = 12 * 60 * 60 * 1000
+async function summarizeCloud($) {
+  const dir = (await dataDir($)) + '/cloud'
+  let files
+  try {
+    files = await $.fs.list(dir)
+  } catch {
+    return
+  }
+  const now = await $.clock.now()
+  for (const f of files) {
+    if (!/^[\w-]+\.json$/.test(f.name) || f.name.endsWith('.summary.json')) continue
+    const id = f.name.slice(0, -'.json'.length)
+    let chat, prev
+    try {
+      chat = JSON.parse(await $.fs.read(dir + '/' + f.name))
+    } catch {
+      continue
+    }
+    const exchanges = (Array.isArray(chat?.exchanges) ? chat.exchanges : [])
+      .filter((x) => typeof x?.ask === 'string' && typeof x?.reply === 'string')
+      .map((x) => ({ ask: x.ask, reply: x.reply }))
+    if (exchanges.length === 0 || !(now - (chat.readAt ?? 0) < CLOUD_DAY_MS)) continue
+    try {
+      prev = JSON.parse(await $.fs.read(dir + '/' + id + '.summary.json'))
+    } catch {
+      prev = null
+    }
+    if (prev?.mark === chat.mark) continue
+    const working = chat.status === 'working'
+    if (working && prev && now - (prev.at ?? 0) < BUSY_RESUMMARY_MS) continue
+    try {
+      const summary = await summarizeExchanges($, chat.rowId || 'cloud:' + id, exchanges.slice(-EXCHANGES), '', prev?.summary ?? null, working, null)
+      await $.fs.write(dir + '/' + id + '.summary.json', JSON.stringify({ rowId: chat.rowId ?? '', mark: chat.mark, at: now, summary }))
+    } catch {
+      // The next read tries again
+    }
+  }
+}
+
 async function catchUp($) {
   if (!me) return
   const now = await $.clock.now()
@@ -1012,6 +1057,7 @@ async function catchUp($) {
   await syncRegistry($)
   const home = await homeOf($)
   const summaries = await summariesOn($)
+  if (summaries) await summarizeCloud($).catch(() => {})
   const jobs = await runningJobs($, liveReg)
   for (const [id, reg] of liveReg) {
     if (id === me.id || !reg.cwd) continue

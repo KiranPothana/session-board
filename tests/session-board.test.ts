@@ -17,6 +17,8 @@ const REGISTRY: Record<string, object> = {
 }
 
 type Opts = {
+  // The cloud chats the Mac window kept (cloud/<name>), by file name
+  cloud?: Record<string, string>
   // The saved conversation the tail reads, when it should differ by how much is read
   tailFor?: (bytes: number) => string
   // What ps lists of Claude Code's command shells, for the running-jobs check
@@ -150,11 +152,15 @@ function stubEngine(on: any, opts: Opts = {}) {
   })
   const registry = opts.registry ?? REGISTRY
   on('fs.list', ($: any, e: any) => ({
-    value: opts.disk && e.path && !String(e.path).includes('sessions') ? opts.disk.list(e.path) : Object.keys(registry).map((name) => ({ name, kind: 'file', size: 100, isLink: false })),
+    value: String(e.path).endsWith('/cloud') ? Object.keys(opts.cloud ?? {}).map((name) => ({ name, kind: 'file', size: 100, isLink: false })) : opts.disk && e.path && !String(e.path).includes('sessions') ? opts.disk.list(e.path) : Object.keys(registry).map((name) => ({ name, kind: 'file', size: 100, isLink: false })),
   }))
   on('fs.read', ($: any, e: any) => {
     const path = String(e.path)
     if (opts.disk?.has(path)) return { value: opts.disk.get(path) }
+    if (path.startsWith(DATA + '/cloud/')) {
+      const text = opts.cloud?.[path.split('/').pop()!]
+      return text === undefined ? { deny: 'no such file' } : { value: text }
+    }
     if (opts.disk && /install\.lock/.test(path)) return { deny: 'no such file' }
     for (const [end, text] of Object.entries(opts.files ?? {})) if (path.endsWith(end)) return { value: text }
     if (path === DATA + '/removed.json') return opts.removed ? { value: JSON.stringify(opts.removed) } : { deny: 'no such file' }
@@ -900,6 +906,31 @@ test('a background agent that reported back no longer counts as running', async 
   await clock.advance(30_000)
   await waitFor(() => (saved.get('s:sess-other') as any)?.agentsRunning !== undefined)
   expect((saved.get('s:sess-other') as any).agentsRunning).toBe(0)
+})
+
+test('a cloud chat the window kept is summarized like a session, once per change', async ($, on) => {
+  const prompts: string[] = []
+  const writes: string[][] = []
+  const chat = { rowId: 'cloud:Referral System', status: 'idle', readAt: 1, mark: 'm1',
+    exchanges: [{ ask: 'add the referral screens', reply: 'Done; money review passed. Four decisions for you, then tell me to deploy to the sandbox.' }] }
+  const cloud: Record<string, string> = { 'session_abc.json': JSON.stringify(chat) }
+  const answer = () => ({ task: 'Ship the referral system', done: 'Money review passed', active: [], pending: ['Decide the 4 open questions · waits on you', 'Deploy to the sandbox'] })
+  const { clock } = stubEngine(on, { prompts, writes, cloud, answer })
+  await start($)
+  await clock.advance(30_000)
+  await waitFor(() => writes.some(([path]) => path === DATA + '/cloud/session_abc.summary.json'))
+  const [, text] = writes.find(([path]) => path === DATA + '/cloud/session_abc.summary.json')!
+  const saved = JSON.parse(text)
+  expect(saved.mark).toBe('m1')
+  expect(saved.summary.task).toBe('Ship the referral system')
+  expect(saved.summary.pending).toEqual(['Decide the 4 open questions · waits on you', 'Deploy to the sandbox'])
+  expect(prompts.some((p) => p.includes('tell me to deploy to the sandbox'))).toBe(true)
+  // Read again with nothing new: no second call
+  cloud['session_abc.summary.json'] = text
+  const calls = prompts.length
+  await clock.advance(30_000)
+  await settle()
+  expect(prompts.length).toBe(calls)
 })
 
 test('a side task and the work it paused come through the summary', async ($, on) => {

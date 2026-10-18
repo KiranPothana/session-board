@@ -33,7 +33,7 @@
 
 <h2>What it reads</h2>
 <p>Files Claude Code already writes on your computer: its list of running sessions, and the saved conversations of those sessions. It reads them to show what each session is doing.</p>
-<p>On a Mac, with the Accessibility permission, the Claude Desktop window: which session it has open (for the highlight), the names and status of the sessions in its sidebar, and the latest lines of a cloud session's chat while you have it open there (for cloud sessions, which leave nothing else on your computer). It also reads the session names Claude Desktop keeps on your computer, to tell its own sessions from cloud ones. None of this leaves your computer.</p>
+<p>On a Mac, with the Accessibility permission, the Claude Desktop window: which session it has open (for the highlight), the names and status of the sessions in its sidebar, and the latest exchanges of a cloud session's chat while you have it open there (for cloud sessions, which leave nothing else on your computer). It also reads the session names Claude Desktop keeps on your computer, to tell its own sessions from cloud ones. None of this leaves your computer, except a cloud chat's exchanges, which are summarized the same way as any session's (below) unless summaries are off; they're kept in Session Board's folder for a week at most.</p>
 
 <h2>What it keeps, and where</h2>
 <ul>
@@ -44,7 +44,7 @@
 
 <h2>What it sends, and where</h2>
 <ul>
-<li><strong>Summaries:</strong> the last few requests and replies of a session, and its earlier requests cut to a line each, go to Claude through Claude Code's own model call, on your Claude account, the same way the session itself talks to Claude. Anthropic's terms and privacy policy apply to that. You can turn summaries off in Settings.</li>
+<li><strong>Summaries:</strong> the last few requests and replies of a session (for a cloud session, those Claude Desktop last showed), and its earlier requests cut to a line each, go to Claude through Claude Code's own model call, on your Claude account, the same way the session itself talks to Claude. Anthropic's terms and privacy policy apply to that. You can turn summaries off in Settings.</li>
 <li><strong>Bug reports, only when you ask</strong> (you say "report", or click Report or a Feedback button): your description, the versions of Session Board, Claude Code and your system, the window's settings, how many sessions are on the board, Session Board's error messages and a crash's stack trace. Your home folder and user name are removed, and nothing from your chats is included. With the GitHub CLI signed in, the report becomes a public issue on the GitHub repo, under your account. Otherwise it goes to Session Board's report inbox, a Cloudflare Worker that files it as an issue in a private GitHub repo only the maintainer can read; the inbox itself keeps nothing.</li>
 <li><strong>Downloads (Windows and Linux):</strong> the window app is downloaded from the GitHub repo's releases, which GitHub sees as a download.</li>
 </ul>

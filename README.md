@@ -59,6 +59,7 @@ It's a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods/overview) 
 ## What you get
 
 - **A row per session** active in the last 12 hours: needs you, working or idle, and for how long; the task it's on, in a line anyone could follow (◎); what it just finished; and a short list of active and pending items.
+- **Cloud sessions, summarized.** When Claude Desktop shows a cloud session's chat, the board keeps its latest exchanges and summarizes them like a local session's: the task, what it did, what's under way and what's next. The card then shows the last summary until Desktop shows the chat again.
 - **Claude Desktop's names.** A session Claude Desktop runs goes by the name its sidebar shows, and a side session it started from another says which one ("↳ Side session of …").
 - **Long sessions keep their thread.** The task line and the steps still ahead (review, sandbox, go live) carry over from summary to summary until the session finishes them or moves to other work, so a session 50 turns in still says what it's for, not just its latest command.
 - **Idle doesn't mean nothing is happening.** If a session finished its turn but left tests, a build or a server running, its row says "Still running: browser tests · 6m". The summary knows too, so it doesn't call work active once the command has ended.
@@ -147,7 +148,7 @@ That's a few small calls per turn, per session, billed to your Claude account li
 
 **Everything else stays on your Mac.**
 - The window reads files Claude Code already writes: the session registry in `~/.claude/sessions` and the plugin's store.
-- On a Mac it also reads Claude Desktop's window, through Accessibility: which session is open (for the highlight), and the names and status of the sessions in its sidebar, and the latest lines of a cloud chat you have open there (for cloud cards). None of it leaves your Mac. Session names from Desktop's own session files (`~/Library/Application Support/Claude/claude-code-sessions`) tell its local sessions apart from cloud ones.
+- On a Mac it also reads Claude Desktop's window, through Accessibility: which session is open (for the highlight), and the names and status of the sessions in its sidebar, and the latest exchanges of a cloud chat you have open there (for cloud cards). None of it leaves your Mac, except a cloud chat's exchanges, which go to the summary like any session's (unless summaries are off) and are kept in `~/Library/Application Support/session-board/cloud` for a week at most. Session names from Desktop's own session files (`~/Library/Application Support/Claude/claude-code-sessions`) tell its local sessions apart from cloud ones.
 - It talks to no server on its own.
 
 **Reports, only when you choose to send one.** Nothing is sent until you say **report** in a chat or click Report
@@ -165,7 +166,7 @@ That's a few small calls per turn, per session, billed to your Claude account li
 Everything here is in `hooks/register.js` (the mod) and `hooks/session-title.mjs` (the one command hook).
 
 **What it sends, and where**
-- **Summaries:** the last few requests and replies of a session (about 15,000 characters at most), its earlier requests cut to a line each, and its previous list, to Claude through Claude Code's own model call (`$.model.complete`, Sonnet at low effort), billed to your Claude account. Turn them off in Settings.
+- **Summaries:** the last few requests and replies of a session (about 15,000 characters at most; for a cloud session, those Claude Desktop last showed), its earlier requests cut to a line each, and its previous list, to Claude through Claude Code's own model call (`$.model.complete`, Sonnet at low effort), billed to your Claude account. Turn them off in Settings.
 - **Naming** (only with "Also rename in Claude Code" on): a session's first request, to Claude the same way, for a short name.
 - **Bug reports, only when you ask** (you say "report", or click Report or a Feedback button): your description, versions, the window's settings, session counts, error messages and a crash's stack, with your home folder and user name removed and nothing from your chats. With the GitHub CLI signed in, to a public issue on this repo; otherwise to Session Board's report inbox (`session-board-reports.kiran-987.workers.dev`, a Cloudflare Worker that files it as an issue in a private repo).
 - **Windows and Linux:** the window app is downloaded from this repo's GitHub release for the plugin's version (`curl`), and checked against the SHA-256 in `app/release.json` before it's installed.
@@ -206,7 +207,7 @@ Everything here is in `hooks/register.js` (the mod) and `hooks/session-title.mjs
   - the bullets you removed;
   - requests from `/session-board` to show the window;
   - `status.json`, which records what the highlight last saw.
-- **Cloud sessions** (on a Mac, with Claude Desktop): they run on Anthropic's machines, and nothing on your computer lists them, no file and no `claude` command. Claude Desktop's sidebar does, so the window reads it with the Accessibility permission the highlight uses. A cloud card shows the session's name, its group and whether it's running. Each time the session is open in Desktop, the window also reads its chat there: what it's doing now, what it last did and your last request. The card keeps those until the next time you open it. A row counts as cloud when its group has Desktop's cloud badge (or it's in the Cloud section) and it's no session this Mac knows. Only rows the sidebar shows are found: none in a collapsed group or behind "Show more". Clicking a card opens the session in Desktop.
+- **Cloud sessions** (on a Mac, with Claude Desktop): they run on Anthropic's machines, and nothing on your computer lists them, no file and no `claude` command. Claude Desktop's sidebar does, so the window reads it with the Accessibility permission the highlight uses. A cloud card shows the session's name, its group and whether it's running. Each time the session is open in Desktop, the window also reads its chat there, the latest exchanges Desktop has on the page, and the summary turns them into the card's task, done, under way and next lines, as for a local session. The card keeps that summary until the next time you open it. `--open-chat` prints the exchanges it reads. A row counts as cloud when its group has Desktop's cloud badge (or it's in the Cloud section) and it's no session this Mac knows. Only rows the sidebar shows are found: none in a collapsed group or behind "Show more". Clicking a card opens the session in Desktop.
 
 ## Uninstall
 
