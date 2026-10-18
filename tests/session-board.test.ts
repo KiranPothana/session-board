@@ -933,6 +933,20 @@ test('a cloud chat the window kept is summarized like a session, once per change
   expect(prompts.length).toBe(calls)
 })
 
+test('a long summary line is kept whole, for the window to cut and show on hover', async ($, on) => {
+  const long = 'Design and build the signup invite email for people invited without an account, with each desk own branding and a working link'
+  const { saved } = stubEngine(on, { answer: () => ({ task: long, done: long, active: [], pending: [long] }) as any })
+  await start($)
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await waitFor(() => !!(saved.get('s:' + ME) as any)?.summary)
+  const summary = (saved.get('s:' + ME) as any).summary
+  expect(long.length).toBeGreaterThan(90)
+  expect(summary.task).toBe(long)
+  expect(summary.done).toBe(long)
+  expect(summary.pending).toEqual([long])
+})
+
 test('a side task and the work it paused come through the summary', async ($, on) => {
   const answer = () => ({ done: 'Drew the dismiss boards', side: 'Fixing the board/chat status mismatch', paused: 'Light theme and remaining states', active: [], pending: ['Settings panel'] } as any)
   const { saved } = stubEngine(on, { answer })

@@ -1337,7 +1337,9 @@ final class Board: ObservableObject {
             updateTheme()
         }
     }
-    @Published var isDark = themeIsDark(UserDefaults.standard.string(forKey: "theme"))
+    @Published var isDark = themeIsDark(UserDefaults.standard.string(forKey: "theme")) {
+        didSet { tooltipIsDark = isDark }
+    }
     // Claude Desktop is open: only then does its highlight, and the permission it needs, matter
     @Published var desktopRunning = false
     // Commands sessions still have running, by session id
@@ -2072,6 +2074,7 @@ struct TwoToneName: View {
     let bright: Color
     let grey: Color
     var size: CGFloat = 17
+    @State private var cut = false
 
     var body: some View {
         let rest = prefix.map { String(name.dropFirst($0.count)) } ?? name
@@ -2080,6 +2083,16 @@ struct TwoToneName: View {
             Text(rest).foregroundColor(bright).lineLimit(1).truncationMode(.tail)
         }
         .font(.system(size: size, weight: .semibold)).kerning(-size / 100)
+        // The whole name in the tooltip when even the name alone doesn't fit
+        .background(GeometryReader { shown in
+            Text(rest).font(.system(size: size, weight: .semibold)).kerning(-size / 100).lineLimit(1).fixedSize().hidden()
+                .background(GeometryReader { full in
+                    Color.clear
+                        .onAppear { cut = full.size.width > shown.size.width + 1 }
+                        .onChange(of: shown.size) { _, s in cut = full.size.width > s.width + 1 }
+                })
+        })
+        .tooltip(cut ? name : nil)
     }
 }
 
@@ -2092,9 +2105,12 @@ struct ListLine: View {
     var symbol: String?
     var glyphColor: Color?
     var onRemove: (() -> Void)?
-    // At most this many lines (the rest cut with …), or as many as it needs
-    var maxLines: Int?
+    // At most this many lines (the rest cut with …, and shown whole in a tooltip), or as many as it needs
+    var maxLines: Int? = 2
+    // What the tooltip shows when it says more than the line (the line itself, when cut, otherwise)
+    var fullText: String?
     @State private var hovering = false
+    @State private var cut = false
 
     var body: some View {
         // The glyph in its own column, so a wrapped line hangs under the text
@@ -2107,7 +2123,7 @@ struct ListLine: View {
                 }
             }
             .foregroundStyle(glyphColor ?? color).frame(width: 14, alignment: .leading)
-            Text(text).lineLimit(maxLines).fixedSize(horizontal: false, vertical: true)
+            Text(text).lineLimit(maxLines).fixedSize(horizontal: false, vertical: true).truncationReported($cut, Text(text))
             Spacer(minLength: 4)
             if let onRemove {
                 Button(action: onRemove) {
@@ -2120,7 +2136,106 @@ struct ListLine: View {
         .font(.system(size: 11.5, weight: bold ? .bold : .regular, design: .monospaced)).foregroundStyle(color)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .contextMenu { Button("Copy") { copyToPasteboard(text) } }
+        .tooltip(cut || (fullText != nil && fullText != text) ? fullText ?? text : nil)
+        .contextMenu { Button("Copy") { copyToPasteboard(fullText ?? text) } }
+    }
+}
+
+// Whether a Text was cut short by its line limit: the same text laid out with no limit, unseen,
+// behind it, is taller (or wider, for one line that doesn't wrap)
+struct TruncationReport: ViewModifier {
+    @Binding var cut: Bool
+    let text: Text
+    func body(content: Content) -> some View {
+        content.background(GeometryReader { shown in
+            Color.clear.overlay(alignment: .topLeading) {
+                text.lineLimit(nil).fixedSize(horizontal: false, vertical: true).frame(width: shown.size.width, alignment: .leading)
+                    .hidden()
+                    .background(GeometryReader { full in
+                        Color.clear
+                            .onAppear { cut = full.size.height > shown.size.height + 1 }
+                            .onChange(of: full.size) { _, size in cut = size.height > shown.size.height + 1 }
+                            .onChange(of: shown.size) { _, size in cut = full.size.height > size.height + 1 }
+                    })
+            }
+        })
+    }
+}
+extension View {
+    func truncationReported(_ cut: Binding<Bool>, _ text: Text) -> some View { modifier(TruncationReport(cut: cut, text: text)) }
+    // The board's own tooltip, quick and in its colours, for text that's cut short (nil: none)
+    func tooltip(_ text: String?) -> some View { modifier(TooltipHover(text: text)) }
+}
+
+struct TooltipHover: ViewModifier {
+    let text: String?
+    func body(content: Content) -> some View {
+        content.onHover { inside in
+            if inside, let text, !text.isEmpty { Tooltip.shared.show(text) } else { Tooltip.shared.hide() }
+        }
+        .onDisappear { Tooltip.shared.hide() }
+    }
+}
+
+// The board's theme, for the tooltip, which isn't in its view tree
+var tooltipIsDark = themeIsDark(UserDefaults.standard.string(forKey: "theme"))
+
+// One tooltip panel for the whole app: shown a moment after the pointer rests on cut-short text,
+// beside the pointer and kept on its screen, wrapped at a reading width, in the board's colours
+@MainActor
+final class Tooltip {
+    static let shared = Tooltip()
+    private var panel: NSPanel?
+    private var pending: DispatchWorkItem?
+    private let delay = 0.25
+
+    func show(_ text: String) {
+        pending?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.present(text) }
+        pending = work
+        // Already showing one: move to the next line at once
+        DispatchQueue.main.asyncAfter(deadline: .now() + (panel?.isVisible == true ? 0 : delay), execute: work)
+    }
+
+    func hide() {
+        pending?.cancel()
+        pending = nil
+        panel?.orderOut(nil)
+    }
+
+    private func present(_ text: String) {
+        let p: Palette = tooltipIsDark ? .dark : .light
+        let view = Text(text)
+            .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(p.text)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 320, alignment: .leading)
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(p.cellHover))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.chipBorder, lineWidth: 1))
+            .fixedSize()
+        let host = NSHostingView(rootView: view)
+        let size = host.fittingSize
+        let panel = self.panel ?? {
+            let made = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+            made.isOpaque = false
+            made.backgroundColor = .clear
+            made.hasShadow = true
+            made.ignoresMouseEvents = true
+            made.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 2)
+            made.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+            self.panel = made
+            return made
+        }()
+        panel.contentView = host
+        // Below and right of the pointer; above it, or left of it, where the screen ends
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        var origin = NSPoint(x: mouse.x + 12, y: mouse.y - 18 - size.height)
+        if origin.y < screen.minY + 4 { origin.y = mouse.y + 14 }
+        origin.x = min(max(origin.x, screen.minX + 4), screen.maxX - size.width - 4)
+        origin.y = min(max(origin.y, screen.minY + 4), screen.maxY - size.height - 4)
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        panel.orderFrontRegardless()
     }
 }
 
@@ -2226,13 +2341,13 @@ struct SessionCard: View {
             Button(action: onOpen) {
                 TwoToneName(name: name, prefix: prefix, bright: row.status == "idle" ? p.idleName : p.text, grey: p.prefix)
             }
-            .buttonStyle(.plain).help("Open this session · " + row.place)
+            .buttonStyle(.plain)
             .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
             VStack(alignment: .leading, spacing: 3) {
                 // The task, so anyone reading the card knows what the session is for
                 if !row.parent.isEmpty { ListLine(glyph: "↳", text: "Side session of " + row.parent, color: p.muted, maxLines: 1) }
                 if !row.task.isEmpty { ListLine(glyph: "◎", text: row.task, color: p.text, bold: true, maxLines: 2) }
-                if !row.ask.isEmpty { ListLine(glyph: "?", text: row.ask, color: p.amberText, bold: true) }
+                if !row.ask.isEmpty { ListLine(glyph: "?", text: row.ask, color: p.amberText, bold: true, maxLines: 4) }
                 if !row.side.isEmpty {
                     ListLine(glyph: "↪", text: row.side, color: p.violet)
                     if !row.paused.isEmpty { ListLine(glyph: "⏸", text: "Paused: " + row.paused, color: p.muted) }
@@ -2243,8 +2358,8 @@ struct SessionCard: View {
                     ListLine(glyph: "", text: item.text, color: p.doing, symbol: "play.fill", glyphColor: p.green, onRemove: { onRemove(item.text) })
                 }
                 if row.status != "working" && (!jobs.isEmpty || row.agentsRunning > 0 || row.workflowsRunning > 0) {
-                    ListLine(glyph: "◷", text: stillRunning(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels), color: p.doing, maxLines: 2)
-                        .help(runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels).joined(separator: "\n"))
+                    ListLine(glyph: "◷", text: stillRunning(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels), color: p.doing, maxLines: 2,
+                             fullText: runningItems(jobs, agents: row.agentsRunning, workflows: row.workflowsRunning, labels: row.runningLabels).joined(separator: "\n"))
                 }
                 if !row.justDid.isEmpty { ListLine(glyph: "✓", text: row.justDid, color: p.muted) }
                 ForEach(row.status == "working" ? visible.filter { !$0.isActive } : visible.filter(\.isActive) + visible.filter { !$0.isActive },
@@ -4318,11 +4433,19 @@ func sampleRows() -> [Row] {
     }
     func next(_ text: String) -> Item { Item(text: text, isActive: false, waitsOnYou: false) }
     func yours(_ text: String) -> Item { Item(text: text, isActive: false, waitsOnYou: true) }
+    let long = CommandLine.arguments.contains("--long")
     func doing(_ text: String) -> Item { Item(text: text, isActive: true, waitsOnYou: false) }
     return [
         row("tracker", "Payments Deposit Tracker", "needs-you", 1, justDid: "Console suite passed · 1,180 tests",
             ask: "Allow: deploy v2.4.1 to the sandbox", task: "Ship v2.4.1, the deposit matching fix: sandbox, then live"),
-        row("mobile", "Payments Mobile Build", "working", 6, justDid: "Phone layout, Trades tab, money forms",
+        // --long: lines too long to fit, for the tooltip
+        long ? row("mobile", "Payments Mobile Build for the phone layout, the Trades tab and the money forms", "working", 6,
+                   justDid: "Phone layout, Trades tab, money forms",
+                   items: [doing("View-only note on Review and Staff"),
+                           next("Test on your iPhone and an Android phone, in light and dark, with each desk’s own branding and a long payee list"),
+                           next("Release: sandbox, then live")],
+                   task: "Design and build the signup invite email for people invited without an account, with each desk’s own branding")
+        : row("mobile", "Payments Mobile Build", "working", 6, justDid: "Phone layout, Trades tab, money forms",
             items: [doing("View-only note on Review and Staff"), next("Test on your iPhone"), next("Release: sandbox, then live")],
             task: "Make the payments app work on phones"),
         row("board", "Session Board", "working", 7, justDid: "Dismiss flow drawn",
