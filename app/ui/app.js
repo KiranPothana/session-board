@@ -774,11 +774,14 @@ function tipFor(target) {
   if (list && list !== line.dataset.copy) return { el, text: list }
   return cut ? { el, text: el.dataset.full ?? line?.dataset.copy ?? el.textContent } : null
 }
-function placeTip(x, y) {
-  const w = tipEl.offsetWidth, h = tipEl.offsetHeight
-  let left = x + 12, top = y + 18
-  if (top + h > innerHeight - 4) top = y - h - 10
-  tipEl.style.left = Math.max(4, Math.min(left, innerWidth - w - 4)) + 'px'
+// Just below the hovered text, lined up with it, so it covers none of the line itself; above it
+// where the window ends
+function placeTip(el) {
+  const r = el.getBoundingClientRect()
+  const w = tipEl.offsetWidth, h = tipEl.offsetHeight, gap = 6
+  let top = r.bottom + gap
+  if (top + h > innerHeight - 4) top = r.top - gap - h
+  tipEl.style.left = Math.max(4, Math.min(r.left - 2, innerWidth - w - 4)) + 'px'
   tipEl.style.top = Math.max(4, Math.min(top, innerHeight - h - 4)) + 'px'
 }
 document.addEventListener('mousemove', (e) => {
@@ -787,7 +790,7 @@ document.addEventListener('mousemove', (e) => {
     clearTimeout(tipTimer)
     tipOver = found?.el ?? null
     if (!found) { tipEl.hidden = true; return }
-    const show = () => { tipEl.textContent = found.text; tipEl.hidden = false; placeTip(e.clientX, e.clientY) }
+    const show = () => { tipEl.textContent = found.text; tipEl.hidden = false; placeTip(found.el) }
     if (tipEl.hidden) tipTimer = setTimeout(show, 250)
     else show()
   }

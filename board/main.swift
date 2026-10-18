@@ -2169,11 +2169,17 @@ extension View {
 
 struct TooltipHover: ViewModifier {
     let text: String?
+    // Where the hovered text is, in its window (from the top left), so the tooltip sits beside it
+    @State private var frame: CGRect = .zero
     func body(content: Content) -> some View {
-        content.onHover { inside in
-            if inside, let text, !text.isEmpty { Tooltip.shared.show(text) } else { Tooltip.shared.hide() }
-        }
-        .onDisappear { Tooltip.shared.hide() }
+        content
+            .background(GeometryReader { g in
+                Color.clear.onAppear { frame = g.frame(in: .global) }.onChange(of: g.frame(in: .global)) { _, f in frame = f }
+            })
+            .onHover { inside in
+                if inside, let text, !text.isEmpty { Tooltip.shared.show(text, line: frame) } else { Tooltip.shared.hide() }
+            }
+            .onDisappear { Tooltip.shared.hide() }
     }
 }
 
@@ -2189,9 +2195,9 @@ final class Tooltip {
     private var pending: DispatchWorkItem?
     private let delay = 0.25
 
-    func show(_ text: String) {
+    func show(_ text: String, line: CGRect) {
         pending?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.present(text) }
+        let work = DispatchWorkItem { [weak self] in self?.present(text, line: line) }
         pending = work
         // Already showing one: move to the next line at once
         DispatchQueue.main.asyncAfter(deadline: .now() + (panel?.isVisible == true ? 0 : delay), execute: work)
@@ -2203,18 +2209,21 @@ final class Tooltip {
         panel?.orderOut(nil)
     }
 
-    private func present(_ text: String) {
+    private func present(_ text: String, line: CGRect) {
         let p: Palette = tooltipIsDark ? .dark : .light
+        // As wide as its longest line, up to a reading width it wraps at; as tall as that makes it
+        let font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let natural = text.split(separator: "\n").map { (String($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        let width = min(320, ceil(natural) + 2)
         let view = Text(text)
-            .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(p.text)
+            .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(p.text).lineSpacing(3)
+            .frame(width: width, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: 320, alignment: .leading)
-            .padding(.horizontal, 9).padding(.vertical, 6)
+            .padding(.horizontal, 10).padding(.vertical, 9)
             .background(RoundedRectangle(cornerRadius: 6).fill(p.cellHover))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.chipBorder, lineWidth: 1))
-            .fixedSize()
         let host = NSHostingView(rootView: view)
-        let size = host.fittingSize
+        let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: width + 20, height: 2000))
         let panel = self.panel ?? {
             let made = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
             made.isOpaque = false
@@ -2227,11 +2236,17 @@ final class Tooltip {
             return made
         }()
         panel.contentView = host
-        // Below and right of the pointer; above it, or left of it, where the screen ends
+        // Just below the hovered text, lined up with it, so it covers none of the line itself; above
+        // it where the screen ends. The pointer's place when the text's isn't known.
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        var origin = NSPoint(x: mouse.x + 12, y: mouse.y - 18 - size.height)
-        if origin.y < screen.minY + 4 { origin.y = mouse.y + 14 }
+        let window = NSApp.windows.first { $0.isVisible && $0 !== self.panel && NSMouseInRect(mouse, $0.frame, false) }
+        let gap: CGFloat = 6
+        let text: NSRect = window.map { w in
+            NSRect(x: w.frame.minX + line.minX, y: w.frame.maxY - line.maxY, width: line.width, height: line.height)
+        } ?? NSRect(x: mouse.x, y: mouse.y - 8, width: 0, height: 16)
+        var origin = NSPoint(x: text.minX - 2, y: text.minY - gap - size.height)
+        if origin.y < screen.minY + 4 { origin.y = text.maxY + gap }
         origin.x = min(max(origin.x, screen.minX + 4), screen.maxX - size.width - 4)
         origin.y = min(max(origin.y, screen.minY + 4), screen.maxY - size.height - 4)
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
