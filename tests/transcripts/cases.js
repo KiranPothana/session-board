@@ -5,6 +5,7 @@ import longTurnQuestion from './long-turn-question.js'
 import finishedNothingPending from './finished-nothing-pending.js'
 import turnEndedRunsGoing from './turn-ended-runs-going.js'
 import permissionPrompt from './permission-prompt.js'
+import idleOpenTasksQuestion from './idle-open-tasks-question.js'
 
 // The other session's registry entry, as Claude Code writes it: "shell" while a command it left
 // running goes on, "waiting" on a prompt, "idle" when nothing runs
@@ -58,5 +59,16 @@ export default [
     lines: permissionPrompt, registry: registry('waiting'),
     record: { turnEnded: false, request: 'the screens look good, build the notices' },
     asks: true,
+  },
+  {
+    // 2026-10-20: a session with an open task list ended its turn asking two things, and the
+    // card kept the list and never showed them. Run as this session's own mod, which tracks the
+    // task tools (own); `final` is the turn's last reply.
+    name: 'a finished turn that asks you to decide, with its task list still open',
+    lines: idleOpenTasksQuestion,
+    own: { tasks: ['Add the export button', 'Ship the export button'],
+      final: 'The export button is in and the tests pass. Before I ship it I need two calls from you: should it export all rows or only the selected ones, and is it OK to deploy to live tonight?' },
+    record: { status: 'idle', tasks: [{ id: '7', subject: 'Add the export button', status: 'pending' }, { id: '7', subject: 'Ship the export button', status: 'pending' }] },
+    prompt: ['add the export button and get it ready to ship', 'should it export all rows or only the selected ones'],
   },
 ]

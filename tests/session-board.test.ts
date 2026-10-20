@@ -245,18 +245,48 @@ test('a session publishes its request, its step and its status', async ($, on) =
   expect(rec.step).toBe('Bash: List the mod files')
 })
 
-test('the task tools give the exact list, with no model call', async ($, on) => {
+test('while the session works through its task list, the list is exact, with no model call', async ($, on) => {
   let modelCalls = 0
-  const { saved } = stubEngine(on, { onModel: () => (modelCalls += 1) })
+  const { saved, clock } = stubEngine(on, { onModel: () => (modelCalls += 1) })
   await start($)
   await $.turn.start({ text: 'go', turnId: 't1' })
   await $.tool.call({ tool: 'TaskCreate', subject: 'Write the tests', description: 'tests', activeForm: 'Writing tests' })
+  // A long turn, which is otherwise summarized again
+  await clock.advance(90 * 1000 + 1)
   await $.tool.call({ tool: 'TaskUpdate', taskId: '7', status: 'in_progress' })
-  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
-  await waitFor(() => (saved.get('s:' + ME) as any)?.status === 'idle')
-  const rec: any = saved.get('s:' + ME)
-  expect(rec.tasks).toEqual([{ id: '7', subject: 'Write the tests', status: 'in_progress' }])
+  await settle()
+  expect((saved.get('s:' + ME) as any).tasks).toEqual([{ id: '7', subject: 'Write the tests', status: 'in_progress' }])
   expect(modelCalls).toBe(0)
+  // Once the turn ends, the summary says what waits on the user, which the list never does
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await waitFor(() => modelCalls > 0)
+  expect(modelCalls).toBe(1)
+  expect((saved.get('s:' + ME) as any).tasks).toEqual([{ id: '7', subject: 'Write the tests', status: 'in_progress' }])
+})
+
+test('a task list left alone this turn does not stop the summary', async ($, on) => {
+  let modelCalls = 0
+  const line = (o: object) => JSON.stringify(o)
+  const said = (ask: string, reply: string) => [
+    line({ type: 'user', message: { role: 'user', content: ask } }),
+    line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: reply }] } }),
+  ]
+  let tail = ['cut-off first line', ...said('plan it', 'Planned it.')].join('\n')
+  // Only this session is live, so every model call is its own
+  const { clock } = stubEngine(on, { onModel: () => (modelCalls += 1), tailFor: () => tail, registry: { '101.json': REGISTRY['101.json'] } })
+  await start($)
+  await $.turn.start({ text: 'plan it', turnId: 't1' })
+  await $.tool.call({ tool: 'TaskCreate', subject: 'Write the tests', description: 'tests', activeForm: 'Writing tests' })
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+  await waitFor(() => modelCalls > 0)
+  const after = modelCalls
+  // A later long turn that never touches the list: summarized like any other
+  await $.turn.start({ text: 'something else', turnId: 't2' })
+  tail += '\n' + said('something else', 'Looking into it.').join('\n')
+  await clock.advance(90 * 1000 + 1)
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  await waitFor(() => modelCalls > after)
+  expect(modelCalls).toBe(after + 1)
 })
 
 test('after a turn, a small model summarizes active and pending items', async ($, on) => {
@@ -1502,6 +1532,20 @@ for (const c of cases) {
     const file = expand(c.lines)
     const run = (argv: string[]) => argv[0] === 'sh' && argv[1] === '-c' && /^tail /.test(argv[2])
       ? { exitCode: 0, stdout: readAsShell(file, Number(argv[4]), argv[2].includes('grep -v')) } : undefined
+    if (c.own) {
+      // This session's own conversation: its task tools tracked as it works, its turn ended
+      const { saved } = stubEngine(on, { prompts, run, size: file.length, registry: { '101.json': { ...REGISTRY['101.json'], status: 'idle' } } })
+      await start($)
+      await $.turn.start({ text: 'go', turnId: 't1' })
+      for (const subject of c.own.tasks) await $.tool.call({ tool: 'TaskCreate', subject, description: subject, activeForm: subject })
+      await $.turn.complete({ turnId: 't1', answer: c.own.final, durationMs: 5, isAborted: false, usage: null, reason: 'answer' })
+      await waitFor(() => prompts.length > 0 && !!(saved.get('s:' + ME) as any)?.summary)
+      const rec = saved.get('s:' + ME) as any
+      for (const [k, v] of Object.entries(c.record)) expect([k, rec?.[k]]).toEqual([k, v])
+      for (const p of c.prompt ?? []) expect(prompts.at(-1)).toContain(p)
+      expect(rec?.summary?.pending).toContain('Publish it · waits on you')
+      return
+    }
     const { saved, clock } = stubEngine(on, { prompts, run, size: file.length, registry: { ...REGISTRY, '202.json': c.registry } })
     await start($)
     await clock.advance(30_000)

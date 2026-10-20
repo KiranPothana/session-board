@@ -9,10 +9,25 @@ Email notices (idle 5m · question)
 ! Say whether to release to the sandbox · waits on you
 alert: your turn
 
+Export button (idle 5m · open-tasks)
+◎ task: Add the export button
+✓ The button and its tests are in
+! Choose all rows or only the selected ones · waits on you
+! Give the go to deploy to live · waits on you
+· Write the export tests
+· Ship the export button
+alert: your turn
+
 Fix the parent bug (working 5m · side)
 ↳ side session of Session board cloud detection
 ◎ task: Fix the missing parent
 ▸ Reading the session files
+alert: none (working)
+
+Import fixes (working 5m · busy-tasks)
+◎ task: Fix the import
+▸ Fix the empty rows
+· Run the import tests
 alert: none (working)
 
 Lost run (idle 5m · lost-run)

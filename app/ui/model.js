@@ -67,21 +67,27 @@ export function buildRows({ store = {}, registry = {}, registryReadable = true, 
     let fromTaskList = false
     if (rec) {
       const tasks = (Array.isArray(rec.tasks) ? rec.tasks : []).filter((t) => t?.status === 'pending' || t?.status === 'in_progress')
+      const active = strings(rec.summary?.active)
+      const pending = strings(rec.summary?.pending)
+      const endsWaiting = (x) => / · waits on you$/.test(x)
+      const summaryItems = [
+        ...active.filter((x) => !endsWaiting(x)).map((text) => ({ text, active: true, waitsOnYou: false })),
+        ...[...active.filter(endsWaiting), ...pending].map((x) => {
+          // A working session isn't waiting on you, whatever the summary says
+          const waits = /waits on you/i.test(x) && status === 'idle'
+          return { text: x.replace(WAITS, ' ').trim(), active: false, waitsOnYou: waits }
+        }),
+      ]
       if (tasks.length) {
-        items = tasks.map((t) => ({ text: String(t.subject ?? ''), active: t.status === 'in_progress', waitsOnYou: false }))
+        // The session's own task list, exact about the work; what its last reply asked of you
+        // comes from the summary, ahead of it (the list never says)
+        items = [
+          ...summaryItems.filter((i) => i.waitsOnYou),
+          ...tasks.map((t) => ({ text: String(t.subject ?? ''), active: t.status === 'in_progress', waitsOnYou: false })),
+        ]
         fromTaskList = true
       } else {
-        const active = strings(rec.summary?.active)
-        const pending = strings(rec.summary?.pending)
-        const endsWaiting = (x) => / · waits on you$/.test(x)
-        items = [
-          ...active.filter((x) => !endsWaiting(x)).map((text) => ({ text, active: true, waitsOnYou: false })),
-          ...[...active.filter(endsWaiting), ...pending].map((x) => {
-            // A working session isn't waiting on you, whatever the summary says
-            const waits = /waits on you/i.test(x) && status === 'idle'
-            return { text: x.replace(WAITS, ' ').trim(), active: false, waitsOnYou: waits }
-          }),
-        ]
+        items = summaryItems
       }
     }
     rows.push({

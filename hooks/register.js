@@ -117,6 +117,8 @@ let summaryRun = 0
 let summarizeAgain = false
 // The reply the last turn ended with, until the next one starts
 let turnAnswer = ''
+// The session changed its task list during this turn: while it works, that list is the board
+let tasksMoved = false
 // Summaries that failed in a row, so a failure is retried only SUMMARY_RETRIES times
 let summaryFailures = 0
 // The reply checkOwnJobs last summarized because the board had missed it, so it tries once per reply
@@ -201,6 +203,11 @@ function stepOf(e) {
 
 // Keep the record's task list in step with the session's own task tools
 function trackTasks(e, r) {
+  const before = me.tasks
+  trackTaskTool(e, r)
+  if (me.tasks !== before) tasksMoved = true
+}
+function trackTaskTool(e, r) {
   if (e.tool === 'TodoWrite' && Array.isArray(e.todos)) {
     me.tasks = e.todos.map((t, i) => ({ id: String(i + 1), subject: oneLine(t.content, LINE_CHARS), status: t.status }))
   } else if (e.tool === 'TaskCreate' && !r?.deny) {
@@ -582,10 +589,12 @@ async function summarizeExchanges($, id, exchanges, pendingAsk, previous, workin
 }
 
 // Ask a small model for the session's active and pending items: when a request is sent, when
-// a turn ends, and every BUSY_RESUMMARY_MS through a long turn. Skipped when the session keeps
-// its own task list, which is exact.
+// a turn ends, and every BUSY_RESUMMARY_MS through a long turn. Skipped while the session works
+// through its own task list, which is exact about the work. Not once the turn has ended, nor
+// for a list it left alone this turn: the list never says what waits on the user (the questions
+// the last reply asked), and one left open from an older plan would hold the card forever.
 async function summarize($, { onlyIfNew = false } = {}) {
-  if (!me || openTasks(me).length > 0) return
+  if (!me || (openTasks(me).length > 0 && me.status !== 'idle' && tasksMoved)) return
   let started
   try {
     started = await $.clock.now()
@@ -1511,6 +1520,7 @@ export function register(on) {
   on('turn.start', async ($, e, next) => {
     if (me) {
       turnAnswer = ''
+      tasksMoved = false
       me.status = 'working'
       me.step = ''
       publishSoon($)

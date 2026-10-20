@@ -57,6 +57,16 @@ test("the session's own task list wins over the summary", () => {
   assert.deepEqual(row.items.map((i) => i.text), ['Do it'])
 })
 
+test('what the last reply asked of you shows ahead of an open task list, once the turn has ended', () => {
+  // 2026-10-20: the card kept an old plan's steps and never showed the questions
+  const rec = { id: 'a', tasks: [{ subject: 'Ship it', status: 'pending' }], summary: { active: ['x'], pending: ['Choose the rows to export · waits on you', 'Ship it'] } }
+  const idle = buildRows({ now: NOW, registry: reg('a'), store: store(rec) })[0]
+  assert.deepEqual(idle.items.map((i) => [i.text, i.waitsOnYou]), [['Choose the rows to export', true], ['Ship it', false]])
+  // While it works through the list, the list alone
+  const working = buildRows({ now: NOW, registry: reg('a', { status: 'busy' }), store: store(rec) })[0]
+  assert.deepEqual(working.items.map((i) => i.text), ['Ship it'])
+})
+
 test('quiet after 12 idle hours; dismissed ones go to Dismissed even when quiet; counts are over what shows', () => {
   const rows = buildRows({ now: NOW, registry: { ...reg('a', { statusUpdatedAt: NOW - 13 * 3_600_000 }), ...reg('b', { status: 'busy' }), ...reg('c', { status: 'waiting' }) } })
   const p = partition(rows, ['a', 'c'])

@@ -1,4 +1,40 @@
 {
+ "s:busy-tasks": {
+  "cwd": "/work/busy-tasks",
+  "id": "busy-tasks",
+  "status": "working",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [
+    "Reading the importer"
+   ],
+   "at": 1792329880000,
+   "done": "",
+   "pending": [
+    "Say which file to try \u00b7 waits on you"
+   ],
+   "task": "Fix the import"
+  },
+  "tasks": [
+   {
+    "id": "1",
+    "status": "completed",
+    "subject": "Fix the date parsing"
+   },
+   {
+    "id": "2",
+    "status": "in_progress",
+    "subject": "Fix the empty rows"
+   },
+   {
+    "id": "3",
+    "status": "pending",
+    "subject": "Run the import tests"
+   }
+  ],
+  "turnEnded": false,
+  "updatedAt": 1792329940000
+ },
  "s:finished": {
   "cwd": "/work/finished",
   "id": "finished",
@@ -44,6 +80,43 @@
    "pending": [],
    "task": "Check the exports"
   },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
+ "s:open-tasks": {
+  "cwd": "/work/open-tasks",
+  "id": "open-tasks",
+  "request": "add the export button and get it ready to ship",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "The button and its tests are in",
+   "pending": [
+    "Choose all rows or only the selected ones \u00b7 waits on you",
+    "Give the go to deploy to live \u00b7 waits on you",
+    "Ship the export button"
+   ],
+   "task": "Add the export button"
+  },
+  "tasks": [
+   {
+    "id": "1",
+    "status": "completed",
+    "subject": "Add the export button"
+   },
+   {
+    "id": "2",
+    "status": "in_progress",
+    "subject": "Write the export tests"
+   },
+   {
+    "id": "3",
+    "status": "pending",
+    "subject": "Ship the export button"
+   }
+  ],
   "turnEnded": true,
   "updatedAt": 1792329940000
  },

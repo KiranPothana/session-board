@@ -1097,7 +1097,10 @@ func loadRows(now: Double) -> [Row] {
                 .filter { ["pending", "in_progress"].contains($0["status"] as? String ?? "") }
             let summary = rec["summary"] as? [String: Any]
             if !tasks.isEmpty {
-                items = tasks.map {
+                // The session's own task list, exact about the work; what its last reply asked
+                // of you comes from the summary, ahead of it (the list never says)
+                let waiting = summary.map { summaryItems($0, status: status).filter(\.waitsOnYou) } ?? []
+                items = waiting + tasks.map {
                     Item(text: ($0["subject"] as? String) ?? "", isActive: ($0["status"] as? String) == "in_progress", waitsOnYou: false)
                 }
             } else if let summary {

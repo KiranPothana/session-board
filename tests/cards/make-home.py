@@ -51,6 +51,18 @@ session(108, 'parent', 'Session board cloud detection', 'idle', {'status': 'idle
 # sidebar row under its old title is no cloud session
 session(109, 'renamed', 'Old hook name', 'idle', {'status': 'idle', 'summary': summary('Design the referral screens', 'Drew the screens')},
         entrypoint='claude-desktop', nameSource='hook')
+# A finished turn that asks you to decide, in a session whose task list is still open
+# (2026-10-20: the card kept the old plan's steps and never showed the questions)
+def task(i, subject, status):
+    return {'id': str(i), 'subject': subject, 'status': status}
+session(110, 'open-tasks', 'Export button', 'idle', {'status': 'idle', 'request': 'add the export button and get it ready to ship',
+        'tasks': [task(1, 'Add the export button', 'completed'), task(2, 'Write the export tests', 'in_progress'), task(3, 'Ship the export button', 'pending')],
+        'summary': summary('Add the export button', 'The button and its tests are in',
+                           pending=['Choose all rows or only the selected ones · waits on you', 'Give the go to deploy to live · waits on you', 'Ship the export button'])})
+# A busy session working through its task list: the list as it is, whatever the last summary said
+session(111, 'busy-tasks', 'Import fixes', 'busy', {'status': 'working',
+        'tasks': [task(1, 'Fix the date parsing', 'completed'), task(2, 'Fix the empty rows', 'in_progress'), task(3, 'Run the import tests', 'pending')],
+        'summary': summary('Fix the import', active=['Reading the importer'], pending=['Say which file to try · waits on you'])})
 write('.claude/plugins/store/session-board_fixture.json', store)
 
 desk = 'Library/Application Support/Claude/claude-code-sessions/account/org'

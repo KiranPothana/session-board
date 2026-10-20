@@ -20,7 +20,7 @@ const copy = new Function('return ' + /function readAsShell\(file: string, bytes
   .replace(/: string|: number|: boolean/g, ''))()
 const dir = mkdtempSync(join(tmpdir(), 'pipeline-'))
 const files = process.argv.slice(2).map((p) => readFileSync(p, 'utf8'))
-for (const name of ['long-turn-question', 'turn-ended-runs-going', 'permission-prompt', 'finished-nothing-pending']) {
+for (const name of ['long-turn-question', 'turn-ended-runs-going', 'permission-prompt', 'finished-nothing-pending', 'idle-open-tasks-question']) {
   const lines = (await import(join(here, name + '.js'))).default
   files.push(lines.map((l) => l.replace(/<<pad:(\d+)>>/g, (_, n) => 'x'.repeat(Number(n)))).join('\n') + '\n')
 }
