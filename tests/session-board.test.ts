@@ -1285,10 +1285,11 @@ test("a session moved out of its spare folder reads its conversation where Claud
   // Desktop moves it: its conversation is saved under the folder it moved into, which is where
   // the mod looks for the name Claude gives it, before its next registry pass
   registry['101.json'] = { ...REGISTRY['101.json'], cwd: '/work/app' }
+  const before = runs.length
   await send($, 'the login page is broken, fix it')
   await clock.advance(3_500)
   await settle()
-  const reads = runs.flat().filter((arg) => String(arg).endsWith(ME + '.jsonl'))
+  const reads = runs.slice(before).flat().filter((arg) => String(arg).endsWith(ME + '.jsonl'))
   expect(reads.length).toBeGreaterThan(0)
   expect(reads.every((path) => path.endsWith('/.claude/projects/-work-app/' + ME + '.jsonl'))).toBe(true)
 })

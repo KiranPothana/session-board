@@ -718,7 +718,10 @@ function backgroundLabels(agents = 0, workflows = 0, commands = 0, found = 0) {
 // Where this session's own conversation is saved
 async function ownTranscriptPath($) {
   const home = await homeOf($)
-  const reg = liveReg.get(me.id) ?? (await readRegistry($)).get(me.id)
+  let reg = liveReg.get(me.id)
+  // The cached registry may still have the spare folder Desktop just moved this session out of
+  if (!reg || isSpare(reg.cwd)) reg = (await readRegistry($)).get(me.id) ?? reg
+  adoptMove(reg?.cwd)
   ownStartedAt = reg?.startedAt ?? ownStartedAt
   // Claude Code saves a moved session's conversation under the folder it moved into
   return transcriptPath(home, { cwd: notSpare(reg?.cwd, me.cwd) || (reg?.cwd ?? me.cwd), sessionId: me.id })
