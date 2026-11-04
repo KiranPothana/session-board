@@ -361,18 +361,24 @@ async function nameWithProject($, request) {
   // count, and while it is all there is the name waits for the next request
   const opened = await openedFolder($)
   const project = await projectOf($, opened)
-  // Named from the request the chat began with, even when a later one finds the project
-  me.firstRequest = me.firstRequest || request
-  if (!project) return
+  // Named from the request the chat began with, even when a later one finds the project: kept,
+  // cut to what the model reads, only while the name waits
+  if (!project) {
+    me.firstRequest = me.firstRequest || request.slice(0, ASK_CHARS)
+    return
+  }
+  const first = me.firstRequest || request
   const plain = (x) => x.toLowerCase().replace(/[^a-z0-9]/g, '')
   let title = String(me.title ?? '').trim()
   if (title && plain(title).startsWith(plain(project))) {
     me.projectTitled = true
+    delete me.firstRequest
     return
   }
-  if (!title) title = await titleFor($, me.firstRequest)
+  if (!title) title = await titleFor($, first)
   if (!title || !me) return
   me.projectTitled = true
+  delete me.firstRequest
   me.title = project + ' · ' + title
   await $.fs.write((await dataDir($)) + '/title-' + me.id + '.json', JSON.stringify({ title: me.title }))
   publishSoon($)
