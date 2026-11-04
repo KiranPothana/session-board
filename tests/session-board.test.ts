@@ -57,6 +57,8 @@ type Opts = {
   toasts?: string[]
   // The name the model gives a new session
   title?: string
+  // The folder the session is in now, when it moves (Desktop opens a new one in a spare folder)
+  cwd?: () => string
   // A disk the install reads and changes, shared by every copy of the mod in a test: fs calls,
   // and the commands that make, move and remove files (ln, mv, rm, curl; PowerShell's on Windows)
   disk?: Disk
@@ -125,7 +127,7 @@ function stubEngine(on: any, opts: Opts = {}) {
   on('store.keys', () => ({ value: [...saved.keys()] }))
   on('command.register', () => ({ value: undefined }))
   on('session.id', () => ({ value: ME }))
-  on('session.cwd', () => ({ value: '/work/app' }))
+  on('session.cwd', () => ({ value: opts.cwd?.() ?? '/work/app' }))
   on('session.start', () => ({ cwd: '/work/app' }))
   on('session.messages', () => ({
     value: [
@@ -1247,6 +1249,39 @@ for (const [when, settings] of [['by default', {}], ['with the advanced setting 
     expect(titleWrites(writes)).toEqual([])
   })
 }
+
+// Claude Desktop opens a new session in a spare folder it keeps ready, then moves it into the
+// folder you picked: the spare is never the project, wherever the session is read from
+const SPARE = HOME + '/.claude/spares/spare-3SU8zn'
+const SPARE_REGISTRY = (cwd: string) => ({ ...REGISTRY, '101.json': { ...REGISTRY['101.json'], cwd } })
+
+test("a session still in Desktop's spare folder is not named until it moves into its project", async ($, on) => {
+  const writes: string[][] = []
+  let where = SPARE
+  const registry = SPARE_REGISTRY(SPARE)
+  const { saved } = stubEngine(on, { writes, registry, cwd: () => where, settings: { renameSessions: true, summaries: false } })
+  await start($)
+  await send($, 'the login page is broken, fix it')
+  expect(titleWrites(writes)).toEqual([])
+  expect((saved.get('s:' + ME) as any).title ?? '').not.toContain('spare')
+  // Desktop moves it into the folder you picked: the next request names it after that project
+  where = '/work/app'
+  registry['101.json'] = { ...REGISTRY['101.json'], cwd: '/work/app' }
+  await send($, 'and the signup page')
+  expect(titleWrites(writes)).toEqual(['app · Fix the login page'])
+})
+
+test("a session Desktop already moved out of its spare folder is named after where it moved", async ($, on) => {
+  const writes: string[][] = []
+  // The session's own folder is still the spare it started in; the registry has the move
+  const { saved } = stubEngine(on, { writes, registry: SPARE_REGISTRY('/work/app'), cwd: () => SPARE, settings: { renameSessions: true, summaries: false } })
+  await start($)
+  await send($, 'the login page is broken, fix it')
+  expect(titleWrites(writes)).toEqual(['app · Fix the login page'])
+  // and the card's folder follows it, so the board never shows the spare
+  await settle()
+  expect((saved.get('s:' + ME) as any).cwd).toBe('/work/app')
+})
 
 test("a name that already starts with the project is left as it is", async ($, on) => {
   const writes: string[][] = []
