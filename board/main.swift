@@ -2831,6 +2831,8 @@ struct ToastCard: View {
 
     var body: some View {
         let label = ["Needs you", "Your turn", "Done"][min(max(toast.kind, 0), 2)]
+        // Kept out of the view expression: the nested ternary made the compiler give up type-checking
+        let dotColor: Color = toast.kind == 2 ? p.idle : p.amber
         let square: (fill: Color, ink: Color) = {
             if let s = swatch(toast.colorName) {
                 let v = p.isDark ? s.dark : s.light
@@ -2848,7 +2850,7 @@ struct ToastCard: View {
             .overlay(alignment: .topTrailing) {
                 Button(action: onClose) {
                     ZStack {
-                        Circle().fill(hovering ? p.text : toast.kind == 2 ? p.idle : p.amber)
+                        Circle().fill(hovering ? p.text : dotColor)
                         if hovering { Image(systemName: "xmark").font(.system(size: 7, weight: .heavy)).foregroundStyle(p.gap) }
                     }
                     .frame(width: hovering ? 14 : 9, height: hovering ? 14 : 9)
