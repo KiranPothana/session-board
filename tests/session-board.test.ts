@@ -1257,9 +1257,10 @@ const SPARE_REGISTRY = (cwd: string) => ({ ...REGISTRY, '101.json': { ...REGISTR
 
 test("a session still in Desktop's spare folder is not named until it moves into its project", async ($, on) => {
   const writes: string[][] = []
+  const prompts: string[] = []
   let where = SPARE
   const registry = SPARE_REGISTRY(SPARE)
-  const { saved } = stubEngine(on, { writes, registry, cwd: () => where, settings: { renameSessions: true, summaries: false } })
+  const { saved } = stubEngine(on, { writes, prompts, registry, cwd: () => where, settings: { renameSessions: true, summaries: false } })
   await start($)
   await send($, 'the login page is broken, fix it')
   expect(titleWrites(writes)).toEqual([])
@@ -1269,6 +1270,27 @@ test("a session still in Desktop's spare folder is not named until it moves into
   registry['101.json'] = { ...REGISTRY['101.json'], cwd: '/work/app' }
   await send($, 'and the signup page')
   expect(titleWrites(writes)).toEqual(['app · Fix the login page'])
+  // named from the request the chat began with, as Claude names it, not the one that came later
+  expect(prompts).toEqual(['the login page is broken, fix it'])
+})
+
+test("a session moved out of its spare folder reads its conversation where Claude Code saves it", async ($, on) => {
+  const runs: string[][] = []
+  const registry = SPARE_REGISTRY(SPARE)
+  const { clock } = stubEngine(on, { runs, registry, cwd: () => SPARE, settings: { summaries: false } })
+  await start($)
+  // a registry pass while it is still in the spare
+  await clock.advance(31_000)
+  await settle()
+  // Desktop moves it: its conversation is saved under the folder it moved into, which is where
+  // the mod looks for the name Claude gives it, before its next registry pass
+  registry['101.json'] = { ...REGISTRY['101.json'], cwd: '/work/app' }
+  await send($, 'the login page is broken, fix it')
+  await clock.advance(3_500)
+  await settle()
+  const reads = runs.flat().filter((arg) => String(arg).endsWith(ME + '.jsonl'))
+  expect(reads.length).toBeGreaterThan(0)
+  expect(reads.every((path) => path.endsWith('/.claude/projects/-work-app/' + ME + '.jsonl'))).toBe(true)
 })
 
 test("a session Desktop already moved out of its spare folder is named after where it moved", async ($, on) => {
