@@ -726,7 +726,7 @@ async function ownTranscriptPath($) {
   const home = await homeOf($)
   let reg = liveReg.get(me.id)
   // The cached registry may still have the spare folder Desktop just moved this session out of
-  if (!reg || isSpare(reg.cwd)) reg = (await readRegistry($)).get(me.id) ?? reg
+  if (!reg || (isSpare(reg.cwd) && isSpare(me.cwd))) reg = (await readRegistry($)).get(me.id) ?? reg
   adoptMove(reg?.cwd)
   ownStartedAt = reg?.startedAt ?? ownStartedAt
   // Claude Code saves a moved session's conversation under the folder it moved into
