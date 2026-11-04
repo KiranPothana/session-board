@@ -361,6 +361,8 @@ async function nameWithProject($, request) {
   // count, and while it is all there is the name waits for the next request
   const opened = await openedFolder($)
   const project = await projectOf($, opened)
+  // Named from the request the chat began with, even when a later one finds the project
+  me.firstRequest = me.firstRequest || request
   if (!project) return
   const plain = (x) => x.toLowerCase().replace(/[^a-z0-9]/g, '')
   let title = String(me.title ?? '').trim()
@@ -368,7 +370,7 @@ async function nameWithProject($, request) {
     me.projectTitled = true
     return
   }
-  if (!title) title = await titleFor($, request)
+  if (!title) title = await titleFor($, me.firstRequest)
   if (!title || !me) return
   me.projectTitled = true
   me.title = project + ' · ' + title
