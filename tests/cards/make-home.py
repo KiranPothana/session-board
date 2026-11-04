@@ -63,6 +63,10 @@ session(110, 'open-tasks', 'Export button', 'idle', {'status': 'idle', 'request'
 session(111, 'busy-tasks', 'Import fixes', 'busy', {'status': 'working',
         'tasks': [task(1, 'Fix the date parsing', 'completed'), task(2, 'Fix the empty rows', 'in_progress'), task(3, 'Run the import tests', 'pending')],
         'summary': summary('Fix the import', active=['Reading the importer'], pending=['Say which file to try · waits on you'])})
+# Claude Desktop opens a new session in a spare folder, then moves it into the folder you picked
+# (2026-11-04: named "spare-3SU8zn · …"): the card still has the spare, the registry has the move
+session(112, 'moved', 'Export deposits', 'idle', {'status': 'idle', 'cwd': '/Users/k/.claude/spares/spare-3SU8zn',
+        'summary': summary('Export client deposits', 'Wrote the export')})
 write('.claude/plugins/store/session-board_fixture.json', store)
 
 desk = 'Library/Application Support/Claude/claude-code-sessions/account/org'

@@ -157,6 +157,11 @@ async function osOf($) {
 }
 
 const homeOf = async ($) => (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || ''
+// Claude Desktop opens a new session in a spare folder it keeps ready (~/.claude/spares/spare-<id>),
+// then moves it into the folder you picked. A spare is never where a session works.
+const isSpare = (dir) => String(dir ?? '').includes('/.claude/spares/')
+// The first of these folders that isn't a spare, or ''
+const notSpare = (...dirs) => dirs.find((dir) => dir && !isSpare(dir)) ?? ''
 
 // The folder the mod and the window share, per OS (the window's shared_dir in app/src-tauri)
 async function dataDir($) {
@@ -291,7 +296,7 @@ async function summariesOn($) {
 // Claude Desktop's .claude/worktrees ones too), or else the folder itself. The window works it
 // out the same way.
 async function projectOf($, cwd) {
-  if (!cwd) return ''
+  if (!cwd || isSpare(cwd)) return ''
   let root = cwd
   const worktree = cwd.indexOf('/.claude/worktrees/')
   if (worktree >= 0) root = cwd.slice(0, worktree)
@@ -318,6 +323,19 @@ async function projectOf($, cwd) {
   return root.split('/').filter(Boolean).pop() ?? ''
 }
 
+// The folder this session was opened in: the registry's, read again now since Desktop may have just
+// moved it out of a spare folder, else the session's own; '' while it is only in a spare
+async function openedFolder($) {
+  const reg = (await readRegistry($)).get(me.id) ?? liveReg.get(me.id)
+  adoptMove(reg?.cwd)
+  return notSpare(reg?.cwd, me.cwd, await $.session.cwd().catch(() => ''))
+}
+
+// A session that started in a spare folder takes the folder Desktop moved it into
+function adoptMove(cwd) {
+  if (me && isSpare(me.cwd) && cwd && !isSpare(cwd)) me.cwd = cwd
+}
+
 // A name for a new conversation from its first request, the way Claude names one; '' when the
 // model doesn't answer within TITLE_TIMEOUT_MS, since the request waits for it
 async function titleFor($, request) {
@@ -339,8 +357,9 @@ async function titleFor($, request) {
 async function nameWithProject($, request) {
   const set = await settings($)
   if (set.projectNames === false || set.renameSessions !== true) return
-  // The folder the session was opened in, not one it moved into since
-  const opened = liveReg.get(me.id)?.cwd ?? me.cwd
+  // The folder the session was opened in, not one it moved into since; a spare folder doesn't
+  // count, and while it is all there is the name waits for the next request
+  const opened = await openedFolder($)
   const project = await projectOf($, opened)
   if (!project) return
   const plain = (x) => x.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -697,20 +716,10 @@ function backgroundLabels(agents = 0, workflows = 0, commands = 0, found = 0) {
 // Where this session's own conversation is saved
 async function ownTranscriptPath($) {
   const home = await homeOf($)
-  let reg = liveReg.get(me.id)
-  if (!reg) {
-    for (const f of await $.fs.list(home + '/.claude/sessions')) {
-      if (!f.name.endsWith('.json')) continue
-      try {
-        const r = JSON.parse(await $.fs.read(home + '/.claude/sessions/' + f.name))
-        if (r?.sessionId === me.id) reg = r
-      } catch {
-        // A registry file mid-write
-      }
-    }
-  }
+  const reg = liveReg.get(me.id) ?? (await readRegistry($)).get(me.id)
   ownStartedAt = reg?.startedAt ?? ownStartedAt
-  return transcriptPath(home, { cwd: reg?.cwd ?? me.cwd, sessionId: me.id })
+  // Claude Code saves a moved session's conversation under the folder it moved into
+  return transcriptPath(home, { cwd: notSpare(reg?.cwd, me.cwd) || (reg?.cwd ?? me.cwd), sessionId: me.id })
 }
 // When this session's process started, from the registry
 let ownStartedAt = 0
@@ -762,26 +771,37 @@ async function watchTitle($) {
   }
 }
 
+// The live-session registry Claude Code keeps, by session id. With strict, a missing registry
+// directory throws instead of reading as empty.
+async function readRegistry($, { strict = false } = {}) {
+  const dir = (await homeOf($)) + '/.claude/sessions'
+  const live = new Map()
+  let files
+  try {
+    files = await $.fs.list(dir)
+  } catch (err) {
+    if (strict) throw err
+    return live
+  }
+  for (const f of files) {
+    if (!f.name.endsWith('.json')) continue
+    try {
+      const reg = JSON.parse(await $.fs.read(dir + '/' + f.name))
+      if (reg?.sessionId) live.set(reg.sessionId, reg)
+    } catch {
+      // A registry file mid-write; the next pass reads it
+    }
+  }
+  return live
+}
+
 // Read the live-session registry, and delete the records of sessions that ended a while ago
 async function syncRegistry($) {
-  const home = await homeOf($)
-  const dir = home + '/.claude/sessions'
-  const live = new Map()
-  try {
-    for (const f of await $.fs.list(dir)) {
-      if (!f.name.endsWith('.json')) continue
-      try {
-        const reg = JSON.parse(await $.fs.read(dir + '/' + f.name))
-        if (reg?.sessionId) live.set(reg.sessionId, reg)
-      } catch {
-        // A registry file mid-write; the next pass reads it
-      }
-    }
-  } catch {
-    // No registry directory: delete nothing
-    return
-  }
+  const live = await readRegistry($, { strict: true }).catch(() => null)
+  // No registry directory: delete nothing
+  if (!live) return
   liveReg = live
+  if (me) adoptMove(live.get(me.id)?.cwd)
   const now = await $.clock.now()
   for (const key of await $.store.keys()) {
     if (!key.startsWith(PREFIX)) continue

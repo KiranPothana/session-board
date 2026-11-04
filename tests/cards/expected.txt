@@ -18,6 +18,11 @@ Export button (idle 5m · open-tasks)
 · Ship the export button
 alert: your turn
 
+Export deposits (idle 5m · moved)
+◎ task: Export client deposits
+✓ Wrote the export
+alert: done
+
 Fix the parent bug (working 5m · side)
 ↳ side session of Session board cloud detection
 ◎ task: Fix the missing parent

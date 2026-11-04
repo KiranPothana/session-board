@@ -83,6 +83,21 @@
   "turnEnded": true,
   "updatedAt": 1792329940000
  },
+ "s:moved": {
+  "cwd": "/Users/k/.claude/spares/spare-3SU8zn",
+  "id": "moved",
+  "status": "idle",
+  "statusSince": 1792329700000,
+  "summary": {
+   "active": [],
+   "at": 1792329880000,
+   "done": "Wrote the export",
+   "pending": [],
+   "task": "Export client deposits"
+  },
+  "turnEnded": true,
+  "updatedAt": 1792329940000
+ },
  "s:open-tasks": {
   "cwd": "/work/open-tasks",
   "id": "open-tasks",

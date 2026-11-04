@@ -227,11 +227,20 @@ func focusTerminal(pid: Int) {
     }
 }
 
+// Claude Desktop opens a new session in a spare folder it keeps ready (~/.claude/spares/spare-<id>),
+// then moves it into the folder you picked. A spare is never where a session works.
+func isSpare(_ path: String?) -> Bool { path?.contains("/.claude/spares/") ?? false }
+// The first of these folders that isn't a spare, else the first one there is
+func notSpare(_ dirs: String?...) -> String? {
+    let present = dirs.compactMap { $0 }
+    return present.first { !isSpare($0) } ?? present.first
+}
+
 // The project a folder belongs to: the Git repo it is in (a worktree counts as its main repo,
 // Claude Desktop's .claude/worktrees ones too), or else the folder itself. Looked up once per folder.
 private var projectCache: [String: String] = [:]
 func projectName(_ cwd: String?) -> String {
-    guard let cwd, !cwd.isEmpty else { return "" }
+    guard let cwd, !cwd.isEmpty, !isSpare(cwd) else { return "" }
     if let known = projectCache[cwd] { return known }
     var root = cwd
     if let r = cwd.range(of: "/.claude/worktrees/") { root = String(cwd[..<r.lowerBound]) }
@@ -1080,7 +1089,9 @@ func loadRows(now: Double) -> [Row] {
         // Idle since its last message, at the latest: reopening an old chat in Claude Desktop starts
         // a new process, and that alone isn't activity
         if status == "idle", let last = number(rec?["lastMessageAt"]), last > 0 { changedMs = changedMs > 0 ? min(changedMs, last) : last }
-        let cwd = (rec?["cwd"] as? String) ?? (reg?["cwd"] as? String)
+        let cwd = notSpare(rec?["cwd"] as? String, reg?["cwd"] as? String)
+        // The folder the session was opened in (the registry's), not one it moved into since
+        let opened = notSpare(reg?["cwd"] as? String, cwd)
         // A session the registry only knows by a placeholder ("site-54", derived from the folder)
         // shows the title Claude gave the conversation, the one Claude Desktop shows
         let derived = (reg?["nameSource"] as? String) == "derived"
@@ -1129,11 +1140,10 @@ func loadRows(now: Double) -> [Row] {
             paused: ((rec?["summary"] as? [String: Any])?["paused"] as? String) ?? "",
             fromTaskList: !(((rec?["tasks"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
                 .filter { ["pending", "in_progress"].contains($0["status"] as? String ?? "") }.isEmpty),
-            // The folder the session was opened in (the registry's), not one it moved into since
-            project: projectName((reg?["cwd"] as? String) ?? cwd),
+            project: projectName(opened),
             bridgeId: (reg?["bridgeSessionId"] as? String) ?? "",
             runningLabels: (rec?["runningLabels"] as? [String: String]) ?? [:],
-            otherNames: otherNames(name: shownName.isEmpty ? baseName(cwd) : shownName, project: projectName((reg?["cwd"] as? String) ?? cwd),
+            otherNames: otherNames(name: shownName.isEmpty ? baseName(cwd) : shownName, project: projectName(opened),
                                    former: ((reg?["formerNames"] as? [Any]) ?? []).compactMap { ($0 as? [String: Any])?["name"] as? String }
                                        + [regName] + (hosted?.previousTitles ?? [])),
             task: ((rec?["summary"] as? [String: Any])?["task"] as? String) ?? "",
