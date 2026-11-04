@@ -1262,16 +1262,25 @@ test("a session still in Desktop's spare folder is not named until it moves into
   const registry = SPARE_REGISTRY(SPARE)
   const { saved } = stubEngine(on, { writes, prompts, registry, cwd: () => where, settings: { renameSessions: true, summaries: false } })
   await start($)
-  await send($, 'the login page is broken, fix it')
+  const first = 'the login page is broken, fix it\n' + 'a pasted log line\n'.repeat(400)
+  await send($, first)
+  await settle()
   expect(titleWrites(writes)).toEqual([])
   expect((saved.get('s:' + ME) as any).title ?? '').not.toContain('spare')
-  // Desktop moves it into the folder you picked: the next request names it after that project
+  // Kept to name it from later, cut like every request the record keeps
+  const kept = (saved.get('s:' + ME) as any).firstRequest
+  expect(first.startsWith(kept)).toBe(true)
+  expect(kept.length).toBeLessThanOrEqual(1500)
+  // The mod reloads before Desktop moves it into the folder you picked
+  await start($)
   where = '/work/app'
   registry['101.json'] = { ...REGISTRY['101.json'], cwd: '/work/app' }
   await send($, 'and the signup page')
   expect(titleWrites(writes)).toEqual(['app · Fix the login page'])
   // named from the request the chat began with, as Claude names it, not the one that came later
-  expect(prompts).toEqual(['the login page is broken, fix it'])
+  expect(prompts).toEqual([kept])
+  await settle()
+  expect((saved.get('s:' + ME) as any).firstRequest).toBeUndefined()
 })
 
 test("a session moved out of its spare folder reads its conversation where Claude Code saves it", async ($, on) => {
